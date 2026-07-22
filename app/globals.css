@@ -1,0 +1,220 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Root colors */
+:root {
+  --brand-purple: #7C3AED;
+  --brand-orange: #FF8C00;
+  --brand-dark: #0D0118;
+  --brand-dark2: #110225;
+}
+
+/* Base styles */
+body {
+  background-color: #0D0118;
+  color: #F3F4F6;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* RTL support */
+[dir="rtl"] {
+  font-family: 'Noto Sans Arabic', 'Inter', system-ui, sans-serif;
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: #FF8C00;
+  color: white;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 12px;
+  transition: 0.2s;
+}
+.btn-primary:hover {
+  background-color: #FF9F3F;
+}
+
+.btn-secondary {
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  color: #c4b5fd;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 12px;
+  transition: 0.2s;
+}
+.btn-secondary:hover {
+  background-color: rgba(88, 28, 135, 0.3);
+}
+
+.btn-accent {
+  background-color: #FF8C00;
+  color: white;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 12px;
+}
+.btn-accent:hover {
+  background-color: orange;
+}
+
+/* Cards */
+.card {
+  background-color: #110225;
+  border-radius: 16px;
+  padding: 20px;
+  border: 1px solid rgba(88, 28, 135, 0.4);
+}
+
+.card-light {
+  background-color: #1A0A3C;
+  border-radius: 16px;
+  padding: 20px;
+  border: 1px solid rgba(88, 28, 135, 0.3);
+}
+
+/* Inputs */
+.input-field {
+  width: 100%;
+  background-color: #1A0A3C;
+  border: 1px solid rgba(88, 28, 135, 0.5);
+  border-radius: 12px;
+  padding: 12px;
+  font-size: 14px;
+  color: white;
+}
+
+.input-field::placeholder {
+  color: rgba(196, 181, 253, 0.5);
+}
+
+/* Labels */
+.label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(196, 181, 253, 0.8);
+  margin-bottom: 6px;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.badge-purple {
+  background-color: rgba(88, 28, 135, 0.6);
+  color: #c4b5fd;
+  border: 1px solid rgba(126, 34, 206, 0.4);
+}
+
+.badge-orange {
+  background-color: rgba(194, 65, 12, 0.4);
+  color: #fdba74;
+}
+
+.badge-red {
+  background-color: rgba(127, 29, 29, 0.4);
+  color: #fca5a5;
+}
+
+.badge-green {
+  background-color: rgba(6, 78, 59, 0.4);
+  color: #6ee7b7;
+}
+
+/* Neon effects */
+.neon-purple {
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.3),
+              0 0 40px rgba(168, 85, 247, 0.1);
+}
+
+.neon-orange {
+  box-shadow: 0 0 20px rgba(255, 140, 0, 0.3),
+              0 0 40px rgba(255, 140, 0, 0.1);
+}
+
+.text-neon-orange {
+  color: #FF8C00;
+  text-shadow: 0 0 20px rgba(255, 140, 0, 0.5);
+}
+
+.text-neon-purple {
+  color: #BF7FFF;
+  text-shadow: 0 0 20px rgba(168, 85, 247, 0.5);
+}
+
+/* Titles */
+.section-title {
+  font-size: 24px;
+  font-weight: bold;
+  color: white;
+}
+
+/* Grid background */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(168, 85, 247, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 247, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Animations */
+main {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(168, 85, 247, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(168, 85, 247, 0.6);
+  }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Arabic font */
+.font-arabic {
+  font-family: 'Noto Sans Arabic', 'Inter', system-ui, sans-serif;
+}
+
+/* RTL fixes */
+[dir="rtl"] .input-field {
+  text-align: right;
+}
+
+[dir="rtl"] select {
+  background-position: left 0.75rem center;
+}
+
+[dir="rtl"] .card {
+  text-align: right;
+}
+/* Search bar fix */
+.search-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}

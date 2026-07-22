@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isTeacher() {
+      return isAuth() && getUserRole() == 'teacher';
+    }
+    function isStudent() {
+      return isAuth() && getUserRole() == 'student';
+    }
+
+    // ── Users ─────────────────────────────────────────────
+    match /users/{userId} {
+      // Anyone can read public profiles
+      allow read: if isAuth();
+      // Only the user themselves can create/update their profile
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false;
+    }
+
+    // ── Classes ───────────────────────────────────────────
+    match /classes/{classeId} {
+      // Anyone authenticated can read classes (for search/listing)
+      allow read: if isAuth();
+      // Only teachers can create classes
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.price >= 0
+        && request.resource.data.title.size() > 0;
+      // Only the teacher who owns the class can update it
+      allow update: if isAuth()
+        && (
+          // Teacher updating their own class
+          (isTeacher() && resource.data.teacherId == request.auth.uid)
+          ||
+          // System fields update (enrolledCount, attendanceCount) by enrolled student
+          (isStudent() && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['enrolledCount', 'attendanceCount']))
+        );
+      allow delete: if isTeacher()
+        && resource.data.teacherId == request.auth.uid;
+    }
+
+    // ── Enrollments ───────────────────────────────────────
+    match /enrollments/{enrollmentId} {
+      // Teacher sees enrollments for their classes
+      allow read: if isAuth() && (
+        isTeacher() ||
+        resource.data.studentId == request.auth.uid
+      );
+      // Only teachers can enroll students (manual enrollment model)
+      allow create: if isTeacher()
+        && exists(/databases/$(database)/documents/classes/$(request.resource.data.classeId))
+        && get(/databases/$(database)/documents/classes/$(request.resource.data.classeId)).data.teacherId == request.auth.uid;
+      // Student can only update their own attendance field
+      allow update: if isAuth() && (
+        (isStudent() && resource.data.studentId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attended']))
+        ||
+        (isTeacher())
+      );
+      allow delete: if isTeacher();
+    }
+
+    // ── Ratings ───────────────────────────────────────────
+    match /ratings/{ratingId} {
+      allow read: if isAuth();
+      // Only enrolled students can rate, once per class
+      allow create: if isStudent()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.stars >= 1
+        && request.resource.data.stars <= 5
+        && exists(/databases/$(database)/documents/enrollments/$(request.resource.data.classeId + '_' + request.auth.uid));
+      allow update: if isStudent()
+        && resource.data.studentId == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // ── Subscriptions ─────────────────────────────────────
+    match /subscriptions/{subId} {
+      allow read: if isAuth() && resource.data.teacherId == request.auth.uid;
+      allow create, update: if false; // Only via Cloud Functions / admin
+      allow delete: if false;
+    }
+
+    // ── Admin (future) ────────────────────────────────────
+    match /admin/{document=**} {
+      allow read, write: if false; // Locked for now
+    }
+  }
+}
+
+    // ── Messages ──────────────────────────────────────────
+    match /messages/{messageId} {
+      allow read: if isAuth() && (
+        // Teacher of the class
+        get(/databases/$(database)/documents/classes/$(resource.data.classeId)).data.teacherId == request.auth.uid
+        ||
+        // Enrolled student
+        exists(/databases/$(database)/documents/enrollments/$(resource.data.classeId + '_' + request.auth.uid))
+        ||
+        // Sender themselves
+        resource.data.senderId == request.auth.uid
+      );
+      allow create: if isAuth()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.text.size() > 0
+        && request.resource.data.text.size() <= 1000;
+      allow update: if isAuth(); // for marking read
+      allow delete: if false;
+    }
+
+    // ── Chat Rooms ────────────────────────────────────────
+    match /chatRooms/{roomId} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
