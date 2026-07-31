@@ -2,31 +2,94 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
-import { LogOut, LayoutDashboard, GraduationCap, Menu, X, MessageCircle, Video } from "lucide-react";
+import { LogOut, LayoutDashboard, GraduationCap, Menu, X, MessageCircle, Video, History, MailWarning } from "lucide-react";
 import { useState, useEffect } from "react";
 import LangSwitcher from "./LangSwitcher";
 import NotificationBell from "./NotificationBell";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { collection, query, where, onSnapshot, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
-function useTotalUnread(userId?: string) {
+/** Découpe en lots de 10 — limite de l'opérateur `in` de Firestore */
+function chunk<T>(arr: T[], size = 10): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Compte les messages non lus — uniquement dans les cours de l'utilisateur.
+ *
+ * L'ancienne version interrogeait TOUTE la collection `messages` :
+ * elle téléchargeait les conversations privées de tous les autres
+ * utilisateurs, comptait des messages inconnus, et générait un coût
+ * Firestore qui explosait avec le nombre d'inscrits.
+ */
+function useTotalUnread(userId?: string, role?: string) {
   const [count, setCount] = useState(0);
+
   useEffect(() => {
-    if (!userId) return;
-    const q = query(collection(db, "messages"), where("read", "==", false));
-    const unsub = onSnapshot(q, (snap) => {
-      setCount(snap.docs.filter(d => d.data().senderId !== userId).length);
-    });
-    return () => unsub();
-  }, [userId]);
+    if (!userId || !role) { setCount(0); return; }
+
+    const unsubs: (() => void)[] = [];
+    const counts = new Map<string, number>();
+    let cancelled = false;
+
+    (async () => {
+      try {
+        let classeIds: string[] = [];
+
+        if (role === "teacher") {
+          const snap = await getDocs(
+            query(collection(db, "classes"), where("teacherId", "==", userId))
+          );
+          classeIds = snap.docs.map(d => d.id);
+        } else {
+          const snap = await getDocs(
+            query(collection(db, "enrollments"), where("studentId", "==", userId))
+          );
+          classeIds = [...new Set(snap.docs.map(d => d.data().classeId as string))];
+        }
+
+        if (cancelled || classeIds.length === 0) { setCount(0); return; }
+
+        chunk(classeIds).forEach((ids, i) => {
+          const q = query(
+            collection(db, "messages"),
+            where("classeId", "in", ids),
+            where("read", "==", false)
+          );
+          const unsub = onSnapshot(
+            q,
+            snap => {
+              counts.set(`c${i}`, snap.docs.filter(d => d.data().senderId !== userId).length);
+              setCount([...counts.values()].reduce((a, b) => a + b, 0));
+            },
+            err => {
+              console.error("Compteur messages non lus :", err);
+              counts.set(`c${i}`, 0);
+            }
+          );
+          unsubs.push(unsub);
+        });
+      } catch (err) {
+        console.error("Init compteur échouée :", err);
+        setCount(0);
+      }
+    })();
+
+    return () => { cancelled = true; unsubs.forEach(u => u()); };
+  }, [userId, role]);
+
   return count;
 }
 
 export default function Navbar() {
-  const { user, profile, logout } = useAuth();
+  const { user, profile, logout, emailVerified, sendVerification } = useAuth() as any;
   const { t, isRTL } = useLang();
   const [open, setOpen] = useState(false);
-  const unread = useTotalUnread(user?.uid);
+  const [resendState, setResendState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const unread = useTotalUnread(user?.uid, profile?.role);
 
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : '';
@@ -38,10 +101,53 @@ export default function Navbar() {
     ...(user && profile?.role === "student" ? [{ href: "/mes-cours", label: t.nav.myCourses, icon: GraduationCap }] : []),
     ...(user ? [{ href: "/chat", label: isRTL ? "المحادثات" : "Messages", icon: MessageCircle, badge: unread }] : []),
     ...(user ? [{ href: "/enregistrements", label: isRTL ? "التسجيلات" : "Vidéos", icon: Video }] : []),
+    ...(user && profile?.role === "student" ? [{ href: "/historique-cours", label: isRTL ? "السجل" : "Historique", icon: History }] : []),
   ];
+
+  async function handleResend() {
+    setResendState("sending");
+    try {
+      await sendVerification();
+      setResendState("sent");
+    } catch {
+      setResendState("error");
+    }
+  }
+
+  const showVerifyBanner = user && emailVerified === false && !bannerDismissed;
 
   return (
     <>
+      {/* ═══ BANDEAU : email non vérifié ═══ */}
+      {showVerifyBanner && (
+        <div className="ostadi-verify-banner" dir={isRTL ? "rtl" : "ltr"}>
+          <MailWarning size={15} />
+          <span>
+            {isRTL
+              ? "لم يتم تأكيد بريدك الإلكتروني بعد."
+              : "Votre adresse email n'est pas encore confirmée."}
+          </span>
+          {resendState === "sent" ? (
+            <strong>{isRTL ? "✓ تم الإرسال" : "✓ Email envoyé"}</strong>
+          ) : resendState === "error" ? (
+            <strong style={{ color: '#fca5a5' }}>{isRTL ? "فشل الإرسال" : "Échec de l'envoi"}</strong>
+          ) : (
+            <button onClick={handleResend} disabled={resendState === "sending"}>
+              {resendState === "sending"
+                ? (isRTL ? "جارٍ..." : "Envoi...")
+                : (isRTL ? "إعادة الإرسال" : "Renvoyer le lien")}
+            </button>
+          )}
+          <button
+            onClick={() => setBannerDismissed(true)}
+            className="ostadi-verify-close"
+            aria-label={isRTL ? "إغلاق" : "Fermer"}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <nav className="ostadi-nav">
         <div className="ostadi-nav-inner">
           <Link href="/" className="ostadi-logo">
@@ -60,7 +166,7 @@ export default function Navbar() {
                 {link.badge ? <span className="ostadi-badge-count">{link.badge > 9 ? '9+' : link.badge}</span> : null}
               </Link>
             ))}
-            {user && (profile as any)?.role === "admin" && (
+            {user?.uid === "4bnssIV8FlS80SzaX6ylwc9Fbg92" && (
               <Link href="/admin" className="ostadi-nav-link ostadi-admin-link">⚙️ Admin</Link>
             )}
 
@@ -144,6 +250,33 @@ export default function Navbar() {
       </div>
 
       <style jsx global>{`
+        .ostadi-verify-banner {
+          display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+          background: linear-gradient(90deg, rgba(251,191,36,0.14), rgba(255,140,0,0.1));
+          border-bottom: 1px solid rgba(251,191,36,0.28);
+          padding: 9px 16px;
+          font-size: 12.5px;
+        }
+        .ostadi-verify-banner > svg { color: #fbbf24; flex-shrink: 0; }
+        .ostadi-verify-banner span { color: #fde68a; flex: 1; min-width: 160px; }
+        .ostadi-verify-banner strong { color: #4ade80; font-size: 12px; }
+        .ostadi-verify-banner button:not(.ostadi-verify-close) {
+          background: rgba(251,191,36,0.2); border: 1px solid rgba(251,191,36,0.35);
+          color: #fbbf24; font-size: 11.5px; font-weight: 700;
+          padding: 5px 12px; border-radius: 8px; cursor: pointer;
+          font-family: inherit; white-space: nowrap;
+        }
+        .ostadi-verify-banner button:not(.ostadi-verify-close):hover:not(:disabled) {
+          background: rgba(251,191,36,0.3);
+        }
+        .ostadi-verify-banner button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .ostadi-verify-close {
+          background: none !important; border: none !important;
+          color: #fbbf24 !important; cursor: pointer;
+          display: flex; padding: 0 !important; opacity: 0.6; flex-shrink: 0;
+        }
+        .ostadi-verify-close:hover { opacity: 1; }
+
         .ostadi-nav {
           background: rgba(10,0,20,0.85);
           backdrop-filter: blur(20px) saturate(180%);

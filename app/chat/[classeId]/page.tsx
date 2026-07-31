@@ -3,46 +3,37 @@ import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
+import { trSubject, trLevel } from "@/lib/i18n/translate";
 import {
   subscribeToMessages, sendMessage,
-  markMessagesAsRead, getClasseById
+  markMessagesAsRead, getClasseById,
 } from "@/lib/firestore";
 import { Message, Classe } from "@/lib/types";
-import { Send, ArrowLeft, BookOpen, Phone, Video } from "lucide-react";
+import { Send, ArrowLeft, BookOpen, Video, MessageSquare } from "lucide-react";
 import Link from "next/link";
 
+/* ── Bulle de message ───────────────────────────────────── */
 function MessageBubble({ msg, isOwn, isRTL }: { msg: Message; isOwn: boolean; isRTL: boolean }) {
   function formatTime(iso: string) {
-    return new Date(iso).toLocaleTimeString(isRTL ? "ar" : "fr", {
+    return new Date(iso).toLocaleTimeString(isRTL ? "ar-DZ" : "fr-DZ", {
       hour: "2-digit", minute: "2-digit",
     });
   }
 
-  return (
-    <div className={`flex flex-col gap-1 max-w-[78%] ${isOwn ? "self-end items-end" : "self-start items-start"}`}>
-      {/* Sender name */}
-      {!isOwn && (
-        <span className="text-xs text-purple-500 px-1">{msg.senderName}</span>
-      )}
+  const isTeacher = msg.senderRole === "teacher";
 
-      {/* Bubble */}
-      <div className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed break-words ${
-        isOwn
-          ? "bg-[#FF8C00] text-white rounded-tr-sm"
-          : msg.senderRole === "teacher"
-          ? "bg-purple-800/60 text-purple-100 border border-purple-700/40 rounded-tl-sm"
-          : "bg-[#1A0A3C] text-purple-200 border border-purple-800/40 rounded-tl-sm"
-      }`}
-        dir={isRTL ? "rtl" : "ltr"}
-      >
+  return (
+    <div className={`cb-wrap ${isOwn ? "cb-own" : ""}`}>
+      {!isOwn && <span className="cb-sender">{msg.senderName}</span>}
+
+      <div className={`cb-bubble ${isOwn ? "cb-bubble-own" : isTeacher ? "cb-bubble-teacher" : "cb-bubble-student"}`}>
         {msg.text}
       </div>
 
-      {/* Time + read status */}
-      <div className={`flex items-center gap-1 px-1 ${isOwn ? "flex-row-reverse" : ""}`}>
-        <span className="text-xs text-purple-600">{formatTime(msg.createdAt)}</span>
+      <div className="cb-foot">
+        <span className="cb-time">{formatTime(msg.createdAt)}</span>
         {isOwn && (
-          <span className={`text-xs ${msg.read ? "text-[#FF8C00]" : "text-purple-600"}`}>
+          <span className={`cb-check ${msg.read ? "cb-check-read" : ""}`}>
             {msg.read ? "✓✓" : "✓"}
           </span>
         )}
@@ -62,6 +53,7 @@ export default function ChatPage() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -72,20 +64,15 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!classeId || !user) return;
-
-    // Subscribe to real-time messages
     const unsub = subscribeToMessages(classeId as string, (msgs) => {
       setMessages(msgs);
       setLoading(false);
-      // Mark as read
       markMessagesAsRead(classeId as string, user.uid);
     });
-
     return () => unsub();
   }, [classeId, user]);
 
   useEffect(() => {
-    // Auto scroll to bottom on new messages
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -94,11 +81,13 @@ export default function ChatPage() {
     setClasse(c);
   }
 
+  /* ── Envoi avec gestion d'erreur ──────────────────────── */
   async function handleSend() {
     if (!text.trim() || !user || !profile || sending) return;
     const msgText = text.trim();
     setText("");
     setSending(true);
+    setError(null);
     try {
       await sendMessage({
         classeId: classeId as string,
@@ -109,6 +98,13 @@ export default function ChatPage() {
         read: false,
         createdAt: new Date().toISOString(),
       });
+    } catch (err: any) {
+      // ⚠️ AVANT : l'erreur était avalée et le message perdu
+      console.error("Envoi échoué:", err);
+      setText(msgText); // restaure le texte pour ne pas le perdre
+      setError(isRTL
+        ? "فشل إرسال الرسالة. تحقق من اتصالك."
+        : "Échec de l'envoi. Vérifiez votre connexion.");
     } finally {
       setSending(false);
       inputRef.current?.focus();
@@ -122,30 +118,33 @@ export default function ChatPage() {
     }
   }
 
-  // Group messages by date
+  /* ── Auto-resize du textarea ──────────────────────────── */
+  function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setText(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 128) + "px";
+  }
+
   function getDateLabel(iso: string) {
     const d = new Date(iso);
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
 
-    if (d.toDateString() === today.toDateString())
-      return isRTL ? "اليوم" : "Aujourd'hui";
-    if (d.toDateString() === yesterday.toDateString())
-      return isRTL ? "أمس" : "Hier";
-    return d.toLocaleDateString(isRTL ? "ar-DZ" : "fr-DZ", {
-      day: "2-digit", month: "long",
-    });
+    if (d.toDateString() === today.toDateString()) return isRTL ? "اليوم" : "Aujourd'hui";
+    if (d.toDateString() === yesterday.toDateString()) return isRTL ? "أمس" : "Hier";
+    return d.toLocaleDateString(isRTL ? "ar-DZ" : "fr-DZ", { day: "2-digit", month: "long" });
   }
 
   function groupByDate(msgs: Message[]) {
     const groups: { date: string; messages: Message[] }[] = [];
-    let currentDate = "";
+    let current = "";
     msgs.forEach(m => {
-      const dateLabel = getDateLabel(m.createdAt);
-      if (dateLabel !== currentDate) {
-        currentDate = dateLabel;
-        groups.push({ date: dateLabel, messages: [m] });
+      const label = getDateLabel(m.createdAt);
+      if (label !== current) {
+        current = label;
+        groups.push({ date: label, messages: [m] });
       } else {
         groups[groups.length - 1].messages.push(m);
       }
@@ -156,86 +155,65 @@ export default function ChatPage() {
   const grouped = groupByDate(messages);
 
   return (
-    <div className="flex flex-col h-screen bg-[#0D0118]" dir={isRTL ? "rtl" : "ltr"}>
-      {/* Header */}
-      <div className="bg-[#110225] border-b border-purple-900/40 px-4 py-3 flex items-center gap-3 shrink-0">
-        <Link
-          href="/chat"
-          className={`text-purple-400 hover:text-white transition-colors ${isRTL ? "order-last" : ""}`}
-        >
-          <ArrowLeft className={`w-5 h-5 ${isRTL ? "rotate-180" : ""}`} />
+    <div className="ch-page" dir={isRTL ? "rtl" : "ltr"}>
+
+      {/* ═══ HEADER ═══ */}
+      <header className="ch-header">
+        <Link href="/chat" className="ch-back">
+          <ArrowLeft size={19} style={{ transform: isRTL ? 'rotate(180deg)' : 'none' }} />
         </Link>
 
-        {/* Class info */}
-        <div className="w-10 h-10 rounded-xl bg-purple-900/60 border border-purple-700/40 flex items-center justify-center shrink-0">
-          <BookOpen className="w-5 h-5 text-[#FF8C00]" />
-        </div>
+        <div className="ch-avatar"><BookOpen size={18} /></div>
 
-        <div className={`flex-1 min-w-0 ${isRTL ? "text-right" : ""}`}>
-          <h2 className="font-bold text-white text-sm truncate">
+        <div className="ch-head-info">
+          <h2 className="ch-head-title">
             {classe?.title || (isRTL ? "المحادثة" : "Conversation")}
           </h2>
-          <p className="text-xs text-purple-400">
-            {classe ? `${classe.subject} · ${classe.level}` : ""}
-          </p>
+          {classe && (
+            <p className="ch-head-sub">
+              {trSubject(classe.subject, isRTL)} · {trLevel(classe.level, isRTL)}
+            </p>
+          )}
         </div>
 
-        {/* Join class button */}
         {classe && (
-          <Link
-            href={`/classe/${classe.id}`}
-            className="flex items-center gap-1.5 text-xs font-semibold text-[#FF8C00] hover:text-orange-300 transition-colors border border-[#FF8C00]/30 rounded-xl px-3 py-1.5 shrink-0"
-          >
-            <Video className="w-3.5 h-3.5" />
-            {isRTL ? "الدرس" : "Cours"}
+          <Link href={`/classe/${classe.id}`} className="ch-course-btn">
+            <Video size={14} />
+            <span>{isRTL ? "الدرس" : "Cours"}</span>
           </Link>
         )}
-      </div>
+      </header>
 
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        {/* Grid bg subtle */}
-        <div className="absolute inset-0 opacity-30"
-          style={{
-            backgroundImage: "linear-gradient(rgba(168,85,247,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(168,85,247,0.03) 1px, transparent 1px)",
-            backgroundSize: "40px 40px",
-          }}
-        />
-
+      {/* ═══ MESSAGES ═══ */}
+      <div className="ch-messages">
         {loading ? (
-          <div className="flex items-center justify-center h-full text-purple-500 text-sm">
-            {isRTL ? "جارٍ تحميل الرسائل..." : "Chargement des messages..."}
+          <div className="ch-center">
+            <div className="ch-spinner" />
+            <p>{isRTL ? "جارٍ تحميل الرسائل..." : "Chargement des messages..."}</p>
           </div>
         ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center gap-3">
-            <div className="w-16 h-16 rounded-2xl bg-purple-900/40 border border-purple-700/30 flex items-center justify-center">
-              <BookOpen className="w-8 h-8 text-purple-600" />
-            </div>
-            <p className="text-purple-400 font-medium">
+          <div className="ch-center">
+            <div className="ch-empty-icon"><MessageSquare size={28} /></div>
+            <p className="ch-empty-title">
               {isRTL ? "لا توجد رسائل بعد" : "Aucun message pour l'instant"}
             </p>
-            <p className="text-purple-600 text-sm">
+            <p className="ch-empty-hint">
               {isRTL
-                ? "ابدأ المحادثة مع أستاذك"
-                : "Commencez la conversation avec votre professeur"}
+                ? "ابدأ المحادثة — اطرح سؤالك على أستاذك"
+                : "Lancez la conversation — posez votre question au professeur"}
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 relative">
-            {grouped.map((group) => (
+          <div className="ch-list">
+            {grouped.map(group => (
               <div key={group.date}>
-                {/* Date separator */}
-                <div className="flex items-center gap-3 my-4">
-                  <div className="flex-1 h-px bg-purple-900/40" />
-                  <span className="text-xs text-purple-500 bg-[#0D0118] px-3 py-1 rounded-full border border-purple-900/40">
-                    {group.date}
-                  </span>
-                  <div className="flex-1 h-px bg-purple-900/40" />
+                <div className="ch-date-sep">
+                  <span className="ch-date-line" />
+                  <span className="ch-date-label">{group.date}</span>
+                  <span className="ch-date-line" />
                 </div>
-
-                {/* Messages */}
-                <div className="flex flex-col gap-2">
-                  {group.messages.map((msg) => (
+                <div className="ch-group">
+                  {group.messages.map(msg => (
                     <MessageBubble
                       key={msg.id}
                       msg={msg}
@@ -251,35 +229,224 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* Input area */}
-      <div className="bg-[#110225] border-t border-purple-900/40 px-4 py-3 shrink-0">
-        <div className={`flex items-end gap-3 ${isRTL ? "flex-row-reverse" : ""}`}>
+      {/* ═══ ERREUR ═══ */}
+      {error && (
+        <div className="ch-error">
+          {error}
+          <button onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ═══ SAISIE ═══ */}
+      <footer className="ch-input-bar">
+        <div className="ch-input-row">
           <textarea
             ref={inputRef}
             value={text}
-            onChange={e => setText(e.target.value)}
+            onChange={handleInput}
             onKeyDown={handleKeyDown}
             placeholder={isRTL ? "اكتب رسالة..." : "Écrivez un message..."}
-            className={`flex-1 bg-[#1A0A3C] border border-purple-800/50 rounded-2xl px-4 py-3 text-sm text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-600 resize-none max-h-32 ${isRTL ? "text-right" : ""}`}
             rows={1}
-            style={{ minHeight: "44px" }}
+            maxLength={1000}
+            className="ch-textarea"
           />
           <button
             onClick={handleSend}
             disabled={!text.trim() || sending}
-            className={`w-11 h-11 rounded-2xl flex items-center justify-center transition-all shrink-0 ${
-              text.trim()
-                ? "bg-[#FF8C00] hover:bg-orange-500 text-white neon-orange"
-                : "bg-purple-900/40 text-purple-600"
-            } disabled:opacity-50`}
+            className={`ch-send ${text.trim() ? "ch-send-on" : ""}`}
+            aria-label={isRTL ? "إرسال" : "Envoyer"}
           >
-            <Send className={`w-4 h-4 ${isRTL ? "rotate-180" : ""}`} />
+            <Send size={17} style={{ transform: isRTL ? 'rotate(180deg)' : 'none' }} />
           </button>
         </div>
-        <p className="text-xs text-purple-700 mt-2 text-center">
-          {isRTL ? "Enter للإرسال · Shift+Enter لسطر جديد" : "Entrée pour envoyer · Shift+Entrée pour nouvelle ligne"}
+        <p className="ch-hint">
+          {isRTL
+            ? "Enter للإرسال · Shift+Enter لسطر جديد"
+            : "Entrée pour envoyer · Maj+Entrée pour aller à la ligne"}
         </p>
-      </div>
+      </footer>
+
+      <style jsx global>{`
+        .ch-page {
+          display: flex; flex-direction: column;
+          height: 100vh; height: 100dvh;
+          background: #0A0014;
+          background-image:
+            linear-gradient(rgba(168,85,247,0.022) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(168,85,247,0.022) 1px, transparent 1px);
+          background-size: 40px 40px;
+          overflow: hidden;
+        }
+
+        /* ── Header ── */
+        .ch-header {
+          display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+          background: linear-gradient(180deg, rgba(24,12,52,0.98), rgba(18,8,40,0.98));
+          border-bottom: 1px solid rgba(124,58,237,0.22);
+          padding: 12px 16px;
+          backdrop-filter: blur(12px);
+        }
+        .ch-back {
+          display: flex; align-items: center; justify-content: center;
+          width: 36px; height: 36px; border-radius: 11px; flex-shrink: 0;
+          color: #a78bfa; text-decoration: none; transition: all 0.2s ease;
+        }
+        .ch-back:hover { background: rgba(124,58,237,0.15); color: white; }
+        .ch-avatar {
+          width: 40px; height: 40px; border-radius: 13px; flex-shrink: 0;
+          background: linear-gradient(140deg, rgba(255,140,0,0.22), rgba(124,58,237,0.2));
+          border: 1px solid rgba(255,140,0,0.28);
+          display: flex; align-items: center; justify-content: center; color: #FF8C00;
+        }
+        .ch-head-info { flex: 1; min-width: 0; }
+        .ch-head-title {
+          color: white; font-weight: 750; font-size: 14.5px; margin: 0;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .ch-head-sub { color: #8b7bb8; font-size: 11.5px; margin: 2px 0 0; }
+        .ch-course-btn {
+          display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+          background: rgba(255,140,0,0.12); color: #FF8C00;
+          border: 1px solid rgba(255,140,0,0.3);
+          padding: 8px 14px; border-radius: 11px;
+          font-size: 12px; font-weight: 700; text-decoration: none;
+          transition: all 0.2s ease;
+        }
+        .ch-course-btn:hover { background: rgba(255,140,0,0.22); }
+        @media (max-width: 420px) { .ch-course-btn span { display: none; } }
+
+        /* ── Zone messages ── */
+        .ch-messages {
+          flex: 1; overflow-y: auto; padding: 18px 16px;
+          scroll-behavior: smooth;
+        }
+        .ch-messages::-webkit-scrollbar { width: 6px; }
+        .ch-messages::-webkit-scrollbar-thumb {
+          background: rgba(124,58,237,0.25); border-radius: 999px;
+        }
+        .ch-list { display: flex; flex-direction: column; gap: 4px; }
+        .ch-group { display: flex; flex-direction: column; gap: 9px; }
+
+        .ch-center {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          height: 100%; gap: 11px; text-align: center;
+        }
+        .ch-center > p { color: #8b7bb8; font-size: 13.5px; margin: 0; }
+        .ch-spinner {
+          width: 30px; height: 30px; border-radius: 50%;
+          border: 2.5px solid rgba(124,58,237,0.2); border-top-color: #FF8C00;
+          animation: chspin 0.8s linear infinite;
+        }
+        @keyframes chspin { to { transform: rotate(360deg); } }
+        .ch-empty-icon {
+          width: 66px; height: 66px; border-radius: 20px;
+          background: rgba(124,58,237,0.1); border: 1px solid rgba(124,58,237,0.18);
+          display: flex; align-items: center; justify-content: center; color: #7c3aed;
+        }
+        .ch-empty-title { color: #d8b4fe; font-weight: 700; font-size: 15px; margin: 0; }
+        .ch-empty-hint { color: #6d28d9; font-size: 12.5px; margin: 0; max-width: 260px; line-height: 1.5; }
+
+        /* ── Séparateur de date ── */
+        .ch-date-sep { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; }
+        .ch-date-line { flex: 1; height: 1px; background: rgba(124,58,237,0.16); }
+        .ch-date-label {
+          color: #8b7bb8; font-size: 11px; font-weight: 600;
+          background: rgba(20,8,45,0.9); border: 1px solid rgba(124,58,237,0.18);
+          padding: 4px 13px; border-radius: 999px; white-space: nowrap;
+        }
+
+        /* ── Bulles ── */
+        .cb-wrap {
+          display: flex; flex-direction: column; gap: 3px;
+          max-width: 78%; align-self: flex-start; align-items: flex-start;
+        }
+        .cb-own { align-self: flex-end; align-items: flex-end; }
+        .cb-sender {
+          color: #7c3aed; font-size: 11px; font-weight: 600;
+          padding-inline: 4px;
+        }
+        .cb-bubble {
+          padding: 10px 15px; border-radius: 17px;
+          font-size: 13.5px; line-height: 1.55;
+          word-break: break-word; white-space: pre-wrap;
+        }
+        .cb-bubble-own {
+          background: linear-gradient(135deg, #FF8C00, #FF6B00);
+          color: white; border-start-end-radius: 5px;
+          box-shadow: 0 3px 12px rgba(255,140,0,0.2);
+        }
+        .cb-bubble-teacher {
+          background: linear-gradient(140deg, rgba(76,29,149,0.65), rgba(60,20,120,0.65));
+          color: #e9d5ff; border: 1px solid rgba(124,58,237,0.32);
+          border-start-start-radius: 5px;
+        }
+        .cb-bubble-student {
+          background: rgba(26,10,60,0.75);
+          color: #c4b5fd; border: 1px solid rgba(124,58,237,0.2);
+          border-start-start-radius: 5px;
+        }
+        .cb-foot {
+          display: flex; align-items: center; gap: 5px;
+          padding-inline: 4px;
+        }
+        .cb-own .cb-foot { flex-direction: row-reverse; }
+        .cb-time { color: #5b21b6; font-size: 10.5px; }
+        .cb-check { color: #5b21b6; font-size: 10.5px; }
+        .cb-check-read { color: #FF8C00; }
+
+        /* ── Erreur ── */
+        .ch-error {
+          display: flex; align-items: center; justify-content: space-between; gap: 12px;
+          background: rgba(239,68,68,0.12); border-top: 1px solid rgba(239,68,68,0.3);
+          color: #fca5a5; font-size: 12.5px;
+          padding: 10px 16px; flex-shrink: 0;
+        }
+        .ch-error button {
+          background: none; border: none; color: #f87171;
+          cursor: pointer; font-size: 14px; padding: 0;
+        }
+
+        /* ── Barre de saisie ── */
+        .ch-input-bar {
+          flex-shrink: 0;
+          background: linear-gradient(0deg, rgba(24,12,52,0.98), rgba(18,8,40,0.98));
+          border-top: 1px solid rgba(124,58,237,0.22);
+          padding: 12px 16px 14px;
+          backdrop-filter: blur(12px);
+        }
+        .ch-input-row { display: flex; align-items: flex-end; gap: 11px; }
+        .ch-textarea {
+          flex: 1; background: rgba(26,10,60,0.7);
+          border: 1px solid rgba(124,58,237,0.25); border-radius: 18px;
+          padding: 12px 16px; font-size: 13.5px; color: white;
+          font-family: inherit; outline: none; resize: none;
+          min-height: 44px; max-height: 128px; line-height: 1.5;
+          transition: border-color 0.2s ease, background 0.2s ease;
+        }
+        .ch-textarea:focus {
+          border-color: rgba(255,140,0,0.45);
+          background: rgba(26,10,60,0.9);
+        }
+        .ch-textarea::placeholder { color: #6d28d9; }
+        .ch-send {
+          width: 44px; height: 44px; border-radius: 15px; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(124,58,237,0.18); color: #6d28d9;
+          border: none; cursor: pointer;
+          transition: all 0.25s cubic-bezier(0.34,1.4,0.64,1);
+        }
+        .ch-send-on {
+          background: linear-gradient(135deg, #FF8C00, #FF6B00); color: white;
+          box-shadow: 0 4px 16px rgba(255,140,0,0.32);
+        }
+        .ch-send-on:hover { transform: translateY(-2px) scale(1.04); }
+        .ch-send:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+        .ch-hint {
+          color: #4c1d95; font-size: 10.5px; text-align: center;
+          margin: 9px 0 0;
+        }
+        @media (max-width: 520px) { .ch-hint { display: none; } }
+      `}</style>
     </div>
   );
 }

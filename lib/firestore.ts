@@ -629,3 +629,548 @@ export async function markAllNotificationsRead(userId: string): Promise<void> {
   snap.docs.forEach(d => batch.update(d.ref, { read: true }));
   await batch.commit();
 }
+import { EnrollmentRequest } from "./types";
+
+// ── L'élève envoie une demande ───────────────────────────────
+export async function createEnrollmentRequest(
+  data: Omit<EnrollmentRequest, "id">
+): Promise<string> {
+  const ref = await addDoc(collection(db, "enrollmentRequests"), {
+    ...data,
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  });
+
+  // Notifie le professeur
+  await createNotification({
+    userId: data.teacherId,
+    type: "message",
+    title: "📩 Nouvelle demande d'inscription",
+    body: `${data.studentName} souhaite rejoindre "${data.classeTitle}"`,
+    link: `/dashboard`,
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  return ref.id;
+}
+
+// ── Vérifie si l'élève a déjà une demande en cours ───────────
+export async function getMyRequestForClasse(
+  studentId: string,
+  classeId: string
+): Promise<EnrollmentRequest | null> {
+  const q = query(
+    collection(db, "enrollmentRequests"),
+    where("studentId", "==", studentId),
+    where("classeId", "==", classeId)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as EnrollmentRequest;
+}
+
+// ── Le prof récupère toutes ses demandes en attente ──────────
+export async function getPendingRequestsForTeacher(
+  teacherId: string
+): Promise<EnrollmentRequest[]> {
+  const q = query(
+    collection(db, "enrollmentRequests"),
+    where("teacherId", "==", teacherId),
+    where("status", "==", "pending"),
+    orderBy("createdAt", "desc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as EnrollmentRequest));
+}
+
+// ── Le prof ACCEPTE la demande → crée l'inscription ──────────
+export async function acceptEnrollmentRequest(
+  request: EnrollmentRequest
+): Promise<void> {
+  // 1. Marque la demande comme acceptée
+  await updateDoc(doc(db, "enrollmentRequests", request.id), {
+    status: "accepted",
+    reviewedAt: new Date().toISOString(),
+  });
+
+  // 2. Crée l'inscription réelle (donne accès au cours)
+  await addDoc(collection(db, "enrollments"), {
+    classeId: request.classeId,
+    studentId: request.studentId,     // UID réel → accès vidéo garanti
+    studentName: request.studentName,
+    studentPhone: request.studentPhone,
+    addedByTeacher: true,
+    attended: false,
+    enrolledAt: new Date().toISOString(),
+  });
+
+  // 3. Incrémente le compteur du cours
+  const classeRef = doc(db, "classes", request.classeId);
+  const classeSnap = await getDoc(classeRef);
+  if (classeSnap.exists()) {
+    await updateDoc(classeRef, {
+      enrolledCount: (classeSnap.data().enrolledCount || 0) + 1,
+    });
+  }
+
+  // 4. Notifie l'élève
+  await createNotification({
+    userId: request.studentId,
+    type: "message",
+    title: "✅ Demande acceptée !",
+    body: `Vous avez maintenant accès à "${request.classeTitle}"`,
+    link: `/classe/${request.classeId}`,
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+// ── Le prof REFUSE la demande ────────────────────────────────
+export async function rejectEnrollmentRequest(
+  request: EnrollmentRequest
+): Promise<void> {
+  await updateDoc(doc(db, "enrollmentRequests", request.id), {
+    status: "rejected",
+    reviewedAt: new Date().toISOString(),
+  });
+
+  await createNotification({
+    userId: request.studentId,
+    type: "message",
+    title: "Demande non acceptée",
+    body: `Votre demande pour "${request.classeTitle}" n'a pas été acceptée. Contactez le professeur pour plus d'informations.`,
+    link: `/classe/${request.classeId}`,
+    read: false,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// GESTION DES COURS — modification, suppression, archivage
+// ═══════════════════════════════════════════════════════════
+
+// ── Le prof MODIFIE son cours → notifie tous les inscrits ────
+export async function updateClasseWithNotification(
+  classeId: string,
+  updates: Partial<Classe>,
+  originalClasse: Classe
+): Promise<void> {
+  await updateDoc(doc(db, "classes", classeId), updates);
+
+  // Détecte précisément ce qui a changé
+  const changes: string[] = [];
+  if (updates.title && updates.title !== originalClasse.title) changes.push("le titre");
+  if (updates.dateTime && updates.dateTime !== originalClasse.dateTime) changes.push("la date/heure");
+  if (updates.price !== undefined && updates.price !== originalClasse.price) changes.push("le prix");
+  if (updates.durationMinutes !== undefined && updates.durationMinutes !== originalClasse.durationMinutes) changes.push("la durée");
+  if (updates.subject && updates.subject !== originalClasse.subject) changes.push("la matière");
+  if (updates.level && updates.level !== originalClasse.level) changes.push("le niveau");
+  if (updates.description && updates.description !== originalClasse.description) changes.push("la description");
+
+  if (changes.length === 0) return;
+
+  const changeText = changes.length === 1
+    ? changes[0]
+    : changes.slice(0, -1).join(", ") + " et " + changes[changes.length - 1];
+
+  // Notifie tous les élèves inscrits
+  const enrollments = await getEnrollmentsByClasse(classeId);
+  for (const enr of enrollments) {
+    await createNotification({
+      userId: enr.studentId,
+      type: "message",
+      title: "📝 Cours modifié",
+      body: `Le professeur a modifié ${changeText} du cours "${updates.title || originalClasse.title}"`,
+      link: `/classe/${classeId}`,
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+}
+
+// ── Le prof SUPPRIME son cours → notifie puis nettoie ────────
+export async function deleteClasseWithNotification(classe: Classe): Promise<void> {
+  // 1. Notifie tous les inscrits AVANT suppression
+  const enrollments = await getEnrollmentsByClasse(classe.id);
+  for (const enr of enrollments) {
+    await createNotification({
+      userId: enr.studentId,
+      type: "message",
+      title: "❌ Cours annulé",
+      body: `Le cours "${classe.title}" a été annulé par le professeur. Contactez-le pour plus d'informations.`,
+      link: `/mes-cours`,
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  const batch = writeBatch(db);
+
+  // 2. Supprime les inscriptions liées
+  for (const enr of enrollments) {
+    batch.delete(doc(db, "enrollments", enr.id));
+  }
+
+  // 3. Supprime les demandes d'inscription liées
+  const reqSnap = await getDocs(
+    query(collection(db, "enrollmentRequests"), where("classeId", "==", classe.id))
+  );
+  reqSnap.docs.forEach(d => batch.delete(d.ref));
+
+  // 4. Supprime le cours
+  batch.delete(doc(db, "classes", classe.id));
+
+  await batch.commit();
+}
+
+// ── AUTO-ARCHIVAGE : cours terminé depuis +1h ────────────────
+export async function autoArchiveFinishedClasses(): Promise<number> {
+  const now = new Date();
+  const snap = await getDocs(collection(db, "classes"));
+  const batch = writeBatch(db);
+  let archived = 0;
+
+  snap.docs.forEach(d => {
+    const c = d.data() as Classe;
+    if (c.status === "ended") return; // déjà terminé
+
+    const start = new Date(c.dateTime);
+    const endTime = new Date(start.getTime() + (c.durationMinutes || 60) * 60000);
+    const oneHourAfterEnd = new Date(endTime.getTime() + 60 * 60000);
+
+    if (now > oneHourAfterEnd) {
+      batch.update(d.ref, {
+        status: "ended",
+        archivedAt: now.toISOString(),
+      });
+      archived++;
+    }
+  });
+
+  if (archived > 0) await batch.commit();
+  return archived;
+}
+
+// ── HISTORIQUE de l'élève : cours passés + à venir ───────────
+export async function getStudentCourseHistory(studentId: string) {
+  const enrollments = await getEnrollmentsByStudent(studentId);
+  const now = new Date();
+
+  const results = await Promise.all(
+    enrollments.map(async (enr) => {
+      const classeSnap = await getDoc(doc(db, "classes", enr.classeId));
+      if (!classeSnap.exists()) return null;
+      const classe = { id: classeSnap.id, ...classeSnap.data() } as Classe;
+
+      // A-t-il noté ce cours ?
+      const ratingSnap = await getDocs(
+        query(
+          collection(db, "ratings"),
+          where("classeId", "==", enr.classeId),
+          where("studentId", "==", studentId)
+        )
+      );
+
+      const start = new Date(classe.dateTime);
+      const end = new Date(start.getTime() + (classe.durationMinutes || 60) * 60000);
+      const isPast = now > end || classe.status === "ended";
+
+      return {
+        ...classe,
+        enrollmentId: enr.id,
+        attended: enr.attended,
+        enrolledAt: enr.enrolledAt,
+        hasRated: !ratingSnap.empty,
+        myRating: ratingSnap.empty ? null : ratingSnap.docs[0].data().stars,
+        isPast,
+      };
+    })
+  );
+
+  const all = results.filter(Boolean) as any[];
+  return {
+    upcoming: all.filter(c => !c.isPast).sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()),
+    past: all.filter(c => c.isPast).sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()),
+    totalSpent: all.reduce((sum, c) => sum + (c.price || 0), 0),
+    totalAttended: all.filter(c => c.attended).length,
+  };
+}
+// ═══════════════════════════════════════════════════════════
+// AJOUTE ces fonctions à la fin de lib/firestore.ts
+// ═══════════════════════════════════════════════════════════
+
+// 🔐 Ton UID admin — doit correspondre à celui des firestore.rules
+export const ADMIN_UID = "4bnssIV8FlS80SzaX6ylwc9Fbg92";
+
+export function isAdminUser(uid?: string | null): boolean {
+  return uid === ADMIN_UID;
+}
+
+// ── STATISTIQUES GLOBALES DE LA PLATEFORME ──────────────────
+export async function getFullPlatformStats() {
+  const [
+    usersSnap, classesSnap, enrollmentsSnap,
+    ratingsSnap, subsSnap, verifSnap, requestsSnap,
+  ] = await Promise.all([
+    getDocs(collection(db, "users")),
+    getDocs(collection(db, "classes")),
+    getDocs(collection(db, "enrollments")),
+    getDocs(collection(db, "ratings")),
+    getDocs(collection(db, "subscriptions")),
+    getDocs(collection(db, "verifications")),
+    getDocs(collection(db, "enrollmentRequests")),
+  ]);
+
+  const users = usersSnap.docs.map(d => d.data());
+  const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+  const enrollments = enrollmentsSnap.docs.map(d => d.data()) as any[];
+  const ratings = ratingsSnap.docs.map(d => d.data()) as any[];
+  const subs = subsSnap.docs.map(d => d.data()) as any[];
+  const verifs = verifSnap.docs.map(d => d.data()) as any[];
+  const requests = requestsSnap.docs.map(d => d.data()) as any[];
+
+  const teachers = users.filter(u => u.role === "teacher");
+  const students = users.filter(u => u.role === "student");
+
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const thisYear = now.getFullYear();
+  const COMMISSION_RATE = 0.10;
+
+  // ── Revenus ────────────────────────────────────────
+  // Map cours → prix pour calculer le CA généré
+  const classPriceMap = new Map(classes.map(c => [c.id, c.price || 0]));
+
+  let gmvTotal = 0, gmvMonth = 0, gmvYear = 0;
+  let enrollMonth = 0, enrollYear = 0;
+
+  enrollments.forEach(e => {
+    const price = classPriceMap.get(e.classeId) || 0;
+    gmvTotal += price;
+    const d = new Date(e.enrolledAt);
+    if (d.getFullYear() === thisYear) {
+      gmvYear += price;
+      enrollYear++;
+      if (d.getMonth() === thisMonth) {
+        gmvMonth += price;
+        enrollMonth++;
+      }
+    }
+  });
+
+  // Abonnements actifs
+  const activeSubs = subs.filter(s => s.status === "active");
+  const pendingSubs = subs.filter(s => s.status === "pending");
+  const subRevenueTotal = activeSubs.reduce((sum, s) => sum + (s.amount || 0), 0);
+  const subRevenueMonth = activeSubs
+    .filter(s => {
+      const d = new Date(s.createdAt);
+      return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+    })
+    .reduce((sum, s) => sum + (s.amount || 0), 0);
+
+  // Commission plateforme
+  const commissionTotal = Math.round(gmvTotal * COMMISSION_RATE);
+  const commissionMonth = Math.round(gmvMonth * COMMISSION_RATE);
+  const commissionYear = Math.round(gmvYear * COMMISSION_RATE);
+
+  // Revenu total Ostadi = abonnements + commissions
+  const revenueTotal = subRevenueTotal + commissionTotal;
+  const revenueMonth = subRevenueMonth + commissionMonth;
+
+  // ── Croissance mensuelle (6 derniers mois) ──────────
+  const monthlyGrowth: { month: string; teachers: number; students: number; revenue: number }[] = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const m = d.getMonth(), y = d.getFullYear();
+    const label = d.toLocaleDateString("fr-DZ", { month: "short" });
+
+    const tCount = teachers.filter(u => {
+      const c = new Date(u.createdAt);
+      return c.getFullYear() < y || (c.getFullYear() === y && c.getMonth() <= m);
+    }).length;
+
+    const sCount = students.filter(u => {
+      const c = new Date(u.createdAt);
+      return c.getFullYear() < y || (c.getFullYear() === y && c.getMonth() <= m);
+    }).length;
+
+    const monthEnrollRevenue = enrollments
+      .filter(e => {
+        const ed = new Date(e.enrolledAt);
+        return ed.getMonth() === m && ed.getFullYear() === y;
+      })
+      .reduce((sum, e) => sum + (classPriceMap.get(e.classeId) || 0), 0);
+
+    monthlyGrowth.push({
+      month: label,
+      teachers: tCount,
+      students: sCount,
+      revenue: Math.round(monthEnrollRevenue * COMMISSION_RATE),
+    });
+  }
+
+  // ── Top professeurs par revenu généré ───────────────
+  const teacherRevenue = new Map<string, { name: string; revenue: number; students: number; rating: number }>();
+  classes.forEach(c => {
+    const enrolls = enrollments.filter(e => e.classeId === c.id);
+    const rev = enrolls.length * (c.price || 0);
+    const existing = teacherRevenue.get(c.teacherId);
+    if (existing) {
+      existing.revenue += rev;
+      existing.students += enrolls.length;
+    } else {
+      teacherRevenue.set(c.teacherId, {
+        name: c.teacherName || "—",
+        revenue: rev,
+        students: enrolls.length,
+        rating: c.teacherRating || 0,
+      });
+    }
+  });
+  const topTeachers = Array.from(teacherRevenue.entries())
+    .map(([uid, data]) => ({ uid, ...data }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8);
+
+  // ── Répartition par wilaya ──────────────────────────
+  const wilayaMap = new Map<string, number>();
+  classes.forEach(c => {
+    wilayaMap.set(c.wilaya, (wilayaMap.get(c.wilaya) || 0) + 1);
+  });
+  const byWilaya = Array.from(wilayaMap.entries())
+    .map(([wilaya, count]) => ({ wilaya, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  // ── Répartition par matière ─────────────────────────
+  const subjectMap = new Map<string, number>();
+  classes.forEach(c => {
+    subjectMap.set(c.subject, (subjectMap.get(c.subject) || 0) + 1);
+  });
+  const bySubject = Array.from(subjectMap.entries())
+    .map(([subject, count]) => ({ subject, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const avgRating = ratings.length
+    ? Math.round((ratings.reduce((s, r) => s + (r.stars || 0), 0) / ratings.length) * 10) / 10
+    : 0;
+
+  const attendanceCount = enrollments.filter(e => e.attended).length;
+
+  return {
+    // Utilisateurs
+    totalUsers: users.length,
+    totalTeachers: teachers.length,
+    totalStudents: students.length,
+    verifiedTeachers: teachers.filter(t => t.diplomaVerified).length,
+    subscribedTeachers: teachers.filter(t => t.subscriptionActive).length,
+
+    // Cours
+    totalClasses: classes.length,
+    liveClasses: classes.filter(c => c.status === "live").length,
+    scheduledClasses: classes.filter(c => c.status === "scheduled").length,
+    endedClasses: classes.filter(c => c.status === "ended").length,
+
+    // Inscriptions
+    totalEnrollments: enrollments.length,
+    enrollMonth,
+    enrollYear,
+    attendanceCount,
+    attendanceRate: enrollments.length ? Math.round((attendanceCount / enrollments.length) * 100) : 0,
+
+    // Demandes
+    pendingRequests: requests.filter(r => r.status === "pending").length,
+    acceptedRequests: requests.filter(r => r.status === "accepted").length,
+
+    // Revenus
+    gmvTotal, gmvMonth, gmvYear,
+    commissionTotal, commissionMonth, commissionYear,
+    subRevenueTotal, subRevenueMonth,
+    revenueTotal, revenueMonth,
+
+    // Modération
+    pendingVerifications: verifs.filter(v => v.status === "pending").length,
+    approvedVerifications: verifs.filter(v => v.status === "approved").length,
+    pendingSubscriptions: pendingSubs.length,
+    activeSubscriptions: activeSubs.length,
+
+    // Qualité
+    totalRatings: ratings.length,
+    avgRating,
+
+    // Analyses
+    monthlyGrowth,
+    topTeachers,
+    byWilaya,
+    bySubject,
+  };
+}
+
+// ── Liste complète des utilisateurs (admin only) ────────────
+export async function getAllUsersForAdmin() {
+  const snap = await getDocs(query(collection(db, "users"), orderBy("createdAt", "desc")));
+  return snap.docs.map(d => ({ uid: d.id, ...d.data() })) as any[];
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// SYNCHRONISATION DES INFOS PROFESSEUR
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Propage la photo et le nom du professeur sur tous ses cours.
+ *
+ * Le champ `teacherPhoto` est dupliqué dans chaque document `classes`
+ * pour éviter une lecture Firestore supplémentaire à chaque affichage
+ * de carte. Sans cette synchronisation, un professeur qui change sa
+ * photo garde l'ancienne sur tous ses cours déjà créés.
+ */
+export async function syncTeacherInfoToClasses(
+  teacherId: string,
+  info: { photoURL?: string; displayName?: string }
+): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "classes"), where("teacherId", "==", teacherId))
+  );
+  if (snap.empty) return 0;
+
+  const updates: Record<string, any> = {};
+  if (info.photoURL !== undefined) updates.teacherPhoto = info.photoURL;
+  if (info.displayName !== undefined) updates.teacherName = info.displayName;
+  if (Object.keys(updates).length === 0) return 0;
+
+  // Firestore limite un batch à 500 opérations
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += 450) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 450).forEach(d => batch.update(d.ref, updates));
+    await batch.commit();
+  }
+
+  return docs.length;
+}
+
+/**
+ * Met à jour le profil d'un professeur et propage aux cours si besoin.
+ * À utiliser à la place de updateUserProfile pour les comptes enseignants.
+ */
+export async function updateTeacherProfile(
+  uid: string,
+  data: Partial<UserProfile>
+): Promise<void> {
+  await updateUserProfile(uid, data);
+
+  if (data.photoURL !== undefined || data.displayName !== undefined) {
+    try {
+      await syncTeacherInfoToClasses(uid, {
+        photoURL: data.photoURL,
+        displayName: data.displayName,
+      });
+    } catch (err) {
+      // Non bloquant : le profil est enregistré même si la propagation échoue
+      console.warn("Propagation aux cours échouée :", err);
+    }
+  }
+}

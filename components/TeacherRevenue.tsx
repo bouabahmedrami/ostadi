@@ -3,23 +3,45 @@ import { useState, useEffect } from "react";
 import { getTeacherEarnings } from "@/lib/firestore";
 import { TeacherEarnings } from "@/lib/types";
 import { TrendingUp, Users, Wallet, AlertCircle, Calendar, CalendarDays } from "lucide-react";
+import { useLang } from "@/lib/lang-context";
 
 interface TeacherRevenueProps {
   teacherId: string;
 }
 
 export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
+  const { isRTL } = useLang();
   const [earnings, setEarnings] = useState<TeacherEarnings | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"month" | "year">("month");
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    getTeacherEarnings(teacherId).then(setEarnings).finally(() => setLoading(false));
+    getTeacherEarnings(teacherId)
+      .then(setEarnings)
+      .catch(err => {
+        // ⚠️ AVANT : pas de .catch() — le composant disparaissait
+        // silencieusement si le calcul échouait
+        console.error("Calcul des revenus échoué :", err);
+        setError(true);
+      })
+      .finally(() => setLoading(false));
   }, [teacherId]);
 
   if (loading) return (
     <div className="ostadi-rev-card">
       <div className="ostadi-rev-skeleton" style={{ height: '120px' }} />
+    </div>
+  );
+
+  if (error) return (
+    <div className="ostadi-rev-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0' }}>
+        <AlertCircle size={17} style={{ color: '#f87171', flexShrink: 0 }} />
+        <span style={{ color: '#fca5a5', fontSize: '13px' }}>
+          {isRTL ? "تعذّر حساب الأرباح" : "Impossible de calculer vos revenus"}
+        </span>
+      </div>
     </div>
   );
 
@@ -36,20 +58,20 @@ export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
       <div className="ostadi-rev-header">
         <h2 className="ostadi-rev-title">
           <Wallet size={17} style={{ color: '#FF8C00' }} />
-          Mes Revenus
+          {isRTL ? "أرباحي" : "Mes Revenus"}
         </h2>
         <div className="ostadi-rev-toggle">
           <button
             onClick={() => setView("month")}
             className={`ostadi-rev-toggle-btn ${view === "month" ? "ostadi-rev-toggle-active" : ""}`}
           >
-            <Calendar size={13} /> Ce mois
+            <Calendar size={13} /> {isRTL ? "هذا الشهر" : "Ce mois"}
           </button>
           <button
             onClick={() => setView("year")}
             className={`ostadi-rev-toggle-btn ${view === "year" ? "ostadi-rev-toggle-active" : ""}`}
           >
-            <CalendarDays size={13} /> Cette année
+            <CalendarDays size={13} /> {isRTL ? "هذه السنة" : "Cette année"}
           </button>
         </div>
       </div>
@@ -71,7 +93,7 @@ export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
             <TrendingUp size={18} style={{ color: '#34d399' }} />
           </div>
           <div>
-            <div className="ostadi-rev-stat-value">{revenue.toLocaleString()} <span style={{ fontSize: '13px' }}>DA</span></div>
+            <div className="ostadi-rev-stat-value">{revenue.toLocaleString()} <span style={{ fontSize: '13px' }}>{isRTL ? 'دج' : 'DA'}</span></div>
             <div className="ostadi-rev-stat-label">Revenu brut</div>
           </div>
         </div>
@@ -81,7 +103,7 @@ export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
       <div className="ostadi-rev-breakdown">
         <div className="ostadi-rev-breakdown-row">
           <span className="ostadi-rev-breakdown-label">Revenu total ({view === "month" ? "mois" : "année"})</span>
-          <span className="ostadi-rev-breakdown-value">{revenue.toLocaleString()} DA</span>
+          <span className="ostadi-rev-breakdown-value">{revenue.toLocaleString()} {isRTL ? 'دج' : 'DA'}</span>
         </div>
         <div className="ostadi-rev-breakdown-row">
           <span className="ostadi-rev-breakdown-label">
@@ -93,8 +115,8 @@ export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
         </div>
         <div className="ostadi-rev-divider" />
         <div className="ostadi-rev-breakdown-row">
-          <span className="ostadi-rev-breakdown-label" style={{ fontWeight: 700, color: 'white' }}>Votre net</span>
-          <span className="ostadi-rev-net-value">{netEarnings.toLocaleString()} DA</span>
+          <span className="ostadi-rev-breakdown-label" style={{ fontWeight: 700, color: 'white' }}>{isRTL ? "صافي أرباحك" : "Votre net"}</span>
+          <span className="ostadi-rev-net-value">{netEarnings.toLocaleString()} {isRTL ? 'دج' : 'DA'}</span>
         </div>
       </div>
 
@@ -103,7 +125,7 @@ export default function TeacherRevenue({ teacherId }: TeacherRevenueProps) {
         <div className="ostadi-rev-alert">
           <AlertCircle size={16} style={{ flexShrink: 0, color: '#FF8C00' }} />
           <p>
-            Vous devez <strong>{commission.toLocaleString()} DA</strong> à Ostadi pour {view === "month" ? "ce mois" : "cette année"}.
+            Vous devez <strong>{commission.toLocaleString()} {isRTL ? 'دج' : 'DA'}</strong> à Ostadi pour {view === "month" ? "ce mois" : "cette année"}.
             Envoyez via BaridiMob ou CIB — coordonnées dans <a href="/abonnement">Mon Abonnement</a>.
           </p>
         </div>

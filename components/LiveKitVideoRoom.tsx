@@ -1,111 +1,221 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { auth } from "@/lib/firebase";
+import { useLang } from "@/lib/lang-context";
 import {
-  LiveKitRoom,
-  VideoConference,
-  RoomAudioRenderer,
-  ControlBar,
+  LiveKitRoom, VideoConference, RoomAudioRenderer,
+  ControlBar, useTracks,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { AlertCircle, Video, Loader2, Lock } from "lucide-react";
 
-interface LiveKitRoomProps {
-  roomName: string;
-  displayName: string;
+interface Props {
+  classeId: string;
   isTeacher?: boolean;
+  /** @deprecated conservé pour compatibilité — le serveur détermine le nom */
+  displayName?: string;
+  /** @deprecated le serveur détermine la salle depuis classeId */
+  roomName?: string;
 }
 
-export default function LiveKitVideoRoom({ roomName, displayName, isTeacher = false }: LiveKitRoomProps) {
+export default function LiveKitVideoRoom({ classeId, isTeacher }: Props) {
+  const { isRTL } = useLang();
   const [token, setToken] = useState<string | null>(null);
-  const [wsUrl, setWsUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
 
-  useEffect(() => {
-    fetchToken();
-  }, [roomName, displayName]);
-
-  async function fetchToken() {
+  const fetchToken = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `/api/livekit-token?room=${encodeURIComponent(roomName)}&username=${encodeURIComponent(displayName)}`
-      );
+      const user = auth.currentUser;
+      if (!user) {
+        setError(isRTL ? "يجب تسجيل الدخول أولاً" : "Vous devez être connecté");
+        return;
+      }
+
+      // ⚠️ Le jeton Firebase prouve l'identité au serveur
+      const idToken = await user.getIdToken();
+
+      const res = await fetch("/api/livekit-token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ classeId }),
+      });
+
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+
+      if (!res.ok) {
+        // Messages adaptés selon la raison du refus
+        const messages: Record<string, [string, string]> = {
+          "unauthenticated": [
+            "Session expirée. Reconnectez-vous.",
+            "انتهت الجلسة. أعد تسجيل الدخول.",
+          ],
+          "not-enrolled": [
+            "Vous n'êtes pas inscrit à ce cours.",
+            "لست مسجلاً في هذا الدرس.",
+          ],
+          "classe-not-found": [
+            "Ce cours n'existe plus.",
+            "هذا الدرس لم يعد موجوداً.",
+          ],
+          "server-misconfigured": [
+            "Service vidéo temporairement indisponible.",
+            "خدمة الفيديو غير متاحة مؤقتاً.",
+          ],
+        };
+        const pair = messages[data?.error];
+        setError(pair
+          ? (isRTL ? pair[1] : pair[0])
+          : (data?.message || (isRTL ? "تعذّر الاتصال" : "Connexion impossible")));
+        return;
+      }
+
       setToken(data.token);
-      setWsUrl(data.url);
-    } catch (e: any) {
-      setError(e.message || "Erreur de connexion");
+      setServerUrl(data.url);
+      setConnected(true);
+    } catch (err: any) {
+      console.error("Erreur LiveKit :", err);
+      setError(isRTL
+        ? "خطأ في الاتصال. تحقق من شبكتك."
+        : "Erreur de connexion. Vérifiez votre réseau.");
     } finally {
       setLoading(false);
     }
+  }, [classeId, isRTL]);
+
+  /* ── Écran avant connexion ────────────────────────────── */
+  if (!connected) {
+    return (
+      <div className="lk-pre">
+        <div className={`lk-pre-icon ${isTeacher ? "lk-pre-icon-teacher" : ""}`}>
+          {error ? <Lock size={30} /> : <Video size={30} />}
+        </div>
+
+        <h3 className="lk-pre-title">
+          {error
+            ? (isRTL ? "الوصول غير متاح" : "Accès non disponible")
+            : isTeacher
+              ? (isRTL ? "ابدأ الدرس المباشر" : "Démarrer le cours en direct")
+              : (isRTL ? "انضم إلى الدرس" : "Rejoindre le cours")}
+        </h3>
+
+        {error ? (
+          <div className="lk-error">
+            <AlertCircle size={15} />
+            <span>{error}</span>
+          </div>
+        ) : (
+          <p className="lk-pre-hint">
+            {isRTL
+              ? "تأكد من السماح بالوصول إلى الكاميرا والميكروفون"
+              : "Autorisez l'accès à votre caméra et micro"}
+          </p>
+        )}
+
+        <button
+          onClick={fetchToken}
+          disabled={loading}
+          className={`lk-btn ${isTeacher ? "lk-btn-teacher" : ""}`}
+        >
+          {loading ? (
+            <><Loader2 size={16} className="lk-spin" /> {isRTL ? "جارٍ الاتصال..." : "Connexion..."}</>
+          ) : error ? (
+            <>{isRTL ? "إعادة المحاولة" : "Réessayer"}</>
+          ) : (
+            <><Video size={16} /> {isTeacher
+              ? (isRTL ? "بدء البث" : "Démarrer")
+              : (isRTL ? "انضم الآن" : "Rejoindre")}</>
+          )}
+        </button>
+
+        <style jsx>{`
+          .lk-pre {
+            display: flex; flex-direction: column; align-items: center;
+            gap: 13px; padding: 38px 24px; text-align: center;
+            background: linear-gradient(150deg, rgba(22,10,48,0.9), rgba(14,6,30,0.92));
+            border: 1px solid rgba(124,58,237,0.2); border-radius: 18px;
+          }
+          .lk-pre-icon {
+            width: 68px; height: 68px; border-radius: 22px;
+            background: linear-gradient(140deg, rgba(124,58,237,0.24), rgba(124,58,237,0.1));
+            border: 1px solid rgba(168,85,247,0.28);
+            display: flex; align-items: center; justify-content: center;
+            color: #a78bfa;
+          }
+          .lk-pre-icon-teacher {
+            background: linear-gradient(140deg, rgba(255,140,0,0.22), rgba(255,140,0,0.08));
+            border-color: rgba(255,140,0,0.3); color: #FF8C00;
+          }
+          .lk-pre-title { color: white; font-weight: 750; font-size: 16px; margin: 0; }
+          .lk-pre-hint { color: #8b7bb8; font-size: 12.5px; margin: 0; max-width: 280px; line-height: 1.55; }
+          .lk-error {
+            display: flex; align-items: flex-start; gap: 8px;
+            background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.28);
+            border-radius: 11px; padding: 10px 13px; max-width: 320px;
+          }
+          .lk-error :global(svg) { color: #f87171; flex-shrink: 0; margin-top: 1px; }
+          .lk-error span { color: #fca5a5; font-size: 12.5px; text-align: start; line-height: 1.5; }
+          .lk-btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            background: linear-gradient(135deg, #7C3AED, #6D28D9); color: white;
+            font-weight: 700; padding: 12px 26px; border-radius: 13px;
+            border: none; cursor: pointer; font-size: 14px; font-family: inherit;
+            box-shadow: 0 6px 20px rgba(124,58,237,0.3);
+            transition: transform 0.24s cubic-bezier(0.34,1.4,0.64,1), filter 0.2s ease;
+          }
+          .lk-btn-teacher {
+            background: linear-gradient(135deg, #FF8C00, #FF6B00);
+            box-shadow: 0 6px 20px rgba(255,140,0,0.3);
+          }
+          .lk-btn:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.08); }
+          .lk-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+          .lk-spin { animation: lkspin 0.8s linear infinite; }
+          @keyframes lkspin { to { transform: rotate(360deg); } }
+        `}</style>
+      </div>
+    );
   }
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', background: '#0D0118', borderRadius: '16px', border: '1px solid rgba(88,28,135,0.4)' }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ width: '40px', height: '40px', border: '3px solid #FF8C00', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-        <p style={{ color: '#a78bfa', fontSize: '14px' }}>Connexion à la salle...</p>
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-
-  if (error) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px', background: 'rgba(127,29,29,0.2)', borderRadius: '16px', border: '1px solid rgba(239,68,68,0.3)' }}>
-      <div style={{ textAlign: 'center' }}>
-        <p style={{ color: '#fca5a5', fontSize: '14px', marginBottom: '12px' }}>❌ {error}</p>
-        <button onClick={fetchToken} style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '8px 16px', borderRadius: '10px', border: 'none', cursor: 'pointer' }}>
-          Réessayer
-        </button>
-      </div>
-    </div>
-  );
-
-  if (!token || !wsUrl) return null;
-
-  if (!connected) return (
-    <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '32px', textAlign: 'center' }}>
-      <div style={{ fontSize: '48px', marginBottom: '16px' }}>🎥</div>
-      <h3 style={{ color: 'white', fontWeight: 700, fontSize: '18px', marginBottom: '8px' }}>
-        {isTeacher ? "Démarrer le cours en direct" : "Rejoindre le cours"}
-      </h3>
-      <p style={{ color: '#a78bfa', fontSize: '14px', marginBottom: '24px' }}>
-        {isTeacher
-          ? "Cliquez pour démarrer la session vidéo avec vos élèves"
-          : "Le professeur est en direct — rejoignez maintenant !"}
-      </p>
-      <button
-        onClick={() => setConnected(true)}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: '8px',
-          background: isTeacher ? '#FF8C00' : '#7C3AED',
-          color: 'white', fontWeight: 700, padding: '14px 28px',
-          borderRadius: '14px', border: 'none', cursor: 'pointer',
-          fontSize: '15px',
-          boxShadow: isTeacher ? '0 0 20px rgba(255,140,0,0.4)' : '0 0 20px rgba(124,58,237,0.4)'
-        }}
-      >
-        {isTeacher ? "🔴 Démarrer maintenant" : "▶ Rejoindre le cours"}
-      </button>
-    </div>
-  );
-
+  /* ── Salle connectée ──────────────────────────────────── */
   return (
-    <div style={{ borderRadius: '16px', overflow: 'hidden', border: '1px solid rgba(88,28,135,0.4)', height: '600px' }}>
+    <div className="lk-room">
       <LiveKitRoom
-        video={true}
-        audio={true}
-        token={token}
-        serverUrl={wsUrl}
-        style={{ height: '100%' }}
-        onDisconnected={() => setConnected(false)}
+        token={token!}
+        serverUrl={serverUrl!}
+        connect
+        video
+        audio
+        onDisconnected={() => {
+          setConnected(false);
+          setToken(null);
+        }}
+        onError={(e) => {
+          console.error("LiveKit :", e);
+          setError(isRTL ? "انقطع الاتصال" : "Connexion interrompue");
+          setConnected(false);
+        }}
+        data-lk-theme="default"
+        style={{ height: "100%", borderRadius: "14px", overflow: "hidden" }}
       >
         <VideoConference />
         <RoomAudioRenderer />
       </LiveKitRoom>
+
+      <style jsx>{`
+        .lk-room {
+          height: 440px; border-radius: 14px; overflow: hidden;
+          border: 1px solid rgba(124,58,237,0.25);
+          background: #000;
+        }
+        @media (max-width: 640px) { .lk-room { height: 360px; } }
+      `}</style>
     </div>
   );
 }

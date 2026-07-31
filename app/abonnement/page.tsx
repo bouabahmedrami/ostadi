@@ -302,10 +302,16 @@ export default function AbonnementPage() {
                 </span>
                 <div className={`flex items-center gap-2 ${isRTL ? "flex-row-reverse" : ""}`}>
                   <span className="text-white font-mono text-sm">
-                    {selectedMethod === "cash" ? bankInfo.rib : bankInfo.number}
+                   {selectedMethod === "cash"
+                      ? (bankInfo as any).rib
+                       : (bankInfo as any).number}
                   </span>
                   <button
-                    onClick={() => copyToClipboard(selectedMethod === "cash" ? (bankInfo as any).rib : bankInfo.number)}
+                    onClick={() =>copyToClipboard(
+                                                  selectedMethod === "cash"
+                                                   ? (bankInfo as any).rib
+                                                  : (bankInfo as any).number
+                                                 )}                        
                     className="text-purple-400 hover:text-[#FF8C00] transition-colors"
                   >
                     {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}

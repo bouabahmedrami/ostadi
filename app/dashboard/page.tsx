@@ -2,12 +2,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { getClasses, createClasse, getEnrollmentsByClasse, enrollStudent, getTeacherStats, generateJitsiRoom } from "@/lib/firestore";
+import { useLang } from "@/lib/lang-context";
+import { getClasses, createClasse, getEnrollmentsByClasse, enrollStudent, getTeacherStats, generateJitsiRoom, autoArchiveFinishedClasses } from "@/lib/firestore";
 import { Classe, Enrollment, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
-import { Plus, Users, BarChart2, Copy, CheckCircle, X, BookOpen, ShieldCheck, MessageCircle, Star, TrendingUp, Zap } from "lucide-react";
+import { Plus, Users, BarChart2, Copy, CheckCircle, X, BookOpen, ShieldCheck, MessageCircle, Star, TrendingUp, Zap, Pencil } from "lucide-react";
 import Link from "next/link";
+import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
 import TeacherRevenue from "@/components/TeacherRevenue";
 import TeacherProfileForm from "@/components/TeacherProfileForm";
+import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
+import EditClasseModal from "@/components/EditClasseModal";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   return (
@@ -25,6 +29,7 @@ function StatCard({ label, value, icon, color }: { label: string; value: string 
 
 export default function DashboardPage() {
   const { user, profile, loading, refreshProfile } = useAuth();
+  const { isRTL } = useLang();
   const router = useRouter();
   const [classes, setClasses] = useState<Classe[]>([]);
   const [stats, setStats] = useState({ totalClasses: 0, totalStudents: 0, totalAttendance: 0, attendanceRate: 0 });
@@ -34,6 +39,7 @@ export default function DashboardPage() {
   const [loadingData, setLoadingData] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"cours" | "revenus" | "profil">("cours");
+  const [editingClasse, setEditingClasse] = useState<Classe | null>(null);
 
   const [form, setForm] = useState({
     title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "",
@@ -41,6 +47,7 @@ export default function DashboardPage() {
     description: "", whatsapp: "", wilaya: "Alger",
   });
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [addPhone, setAddPhone] = useState("");
   const [addName, setAddName] = useState("");
   const [addingStudent, setAddingStudent] = useState(false);
@@ -57,6 +64,7 @@ export default function DashboardPage() {
   async function loadData() {
     setLoadingData(true);
     try {
+      await autoArchiveFinishedClasses();
       const [cls, st] = await Promise.all([
         getClasses({ teacherId: user!.uid }),
         getTeacherStats(user!.uid),
@@ -69,6 +77,7 @@ export default function DashboardPage() {
   }
 
   async function handleCreate() {
+    setCreateError(null);
     if (!form.title || !form.dateTime) return;
     setCreating(true);
     try {
@@ -77,6 +86,9 @@ export default function DashboardPage() {
         ...form,
         teacherId: user!.uid,
         teacherName: profile!.displayName,
+        // Photo dupliquée ici pour éviter une lecture Firestore
+        // supplémentaire à chaque affichage de carte de cours
+        teacherPhoto: (profile as any)?.photoURL || "",
         teacherRating: profile?.rating,
         jitsiRoom,
         enrolledCount: 0,
@@ -87,6 +99,15 @@ export default function DashboardPage() {
       setShowCreateModal(false);
       setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger" });
       await loadData();
+    } catch (err: any) {
+      // Sans catch, un échec fermait le modal comme si tout allait bien
+      console.error("Création du cours échouée :", err);
+      setCreateError(
+        err?.code === "permission-denied"
+          ? (isRTL ? "ليست لديك صلاحية إنشاء درس." : "Vous n'avez pas le droit de créer un cours.")
+          : (isRTL ? "فشل إنشاء الدرس. حاول مرة أخرى." : "Échec de la création. Réessayez.")
+      );
+      return;
     } finally {
       setCreating(false);
     }
@@ -121,14 +142,14 @@ export default function DashboardPage() {
     finally { setAddingStudent(false); }
   }
 
-  function copyLink(jitsiRoom: string, id: string) {
-    navigator.clipboard.writeText(`https://meet.jit.si/${jitsiRoom}`);
+  function copyLink(id: string) {
+    navigator.clipboard.writeText(`${window.location.origin}/classe/${id}`);
     setCopied(id);
     setTimeout(() => setCopied(null), 2000);
   }
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString("fr-DZ", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    return formatDateLocal(iso, isRTL);
   }
 
   if (loading || loadingData) return (
@@ -237,7 +258,7 @@ export default function DashboardPage() {
 
         {/* ═══ TAB: COURS ═══ */}
         {activeTab === "cours" && (
-          <>
+          <>{user && <EnrollmentRequestsPanel teacherId={user.uid} />}
             {classes.length === 0 ? (
               <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '48px', textAlign: 'center' }}>
                 <BookOpen style={{ width: '40px', height: '40px', color: '#4c1d95', margin: '0 auto 12px', opacity: 0.5 }} />
@@ -254,8 +275,8 @@ export default function DashboardPage() {
 
                     <div style={{ flex: 1, minWidth: '200px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                        <span style={{ background: 'rgba(88,28,135,0.5)', color: '#c4b5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px', border: '1px solid rgba(126,34,206,0.4)' }}>{c.subject}</span>
-                        <span style={{ background: 'rgba(29,78,216,0.2)', color: '#93c5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>{c.level}</span>
+                        <span style={{ background: 'rgba(88,28,135,0.5)', color: '#c4b5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px', border: '1px solid rgba(126,34,206,0.4)' }}>{trSubject(c.subject, isRTL)}</span>
+                        <span style={{ background: 'rgba(29,78,216,0.2)', color: '#93c5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>{trLevel(c.level, isRTL)}</span>
                         {c.status === 'live' && <span style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', fontSize: '11px', padding: '3px 10px', borderRadius: '999px', animation: 'pulse 2s infinite' }}>🔴 Live</span>}
                       </div>
                       <div style={{ fontWeight: 700, color: 'white', fontSize: '15px', marginBottom: '4px' }}>{c.title}</div>
@@ -275,6 +296,9 @@ export default function DashboardPage() {
                       >
                         {c.status === 'live' ? '🔴 En direct' : '▶ Démarrer'}
                       </Link>
+                      <button onClick={() => setEditingClasse(c)} style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                        <Pencil style={{ width: '14px', height: '14px' }} /> Modifier
+                      </button>
                       <button onClick={() => openStudents(c)} style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
                         <Users style={{ width: '14px', height: '14px' }} /> Élèves
                       </button>
@@ -282,7 +306,7 @@ export default function DashboardPage() {
                         <MessageCircle style={{ width: '14px', height: '14px' }} /> Chat
                       </Link>
                       <button
-                        onClick={() => copyLink(c.jitsiRoom, c.id)}
+                        onClick={() => copyLink(c.id)}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: copied === c.id ? '#34d399' : '#c4b5fd', background: copied === c.id ? 'rgba(6,78,59,0.3)' : 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, transition: '0.2s' }}
                       >
                         {copied === c.id ? <CheckCircle style={{ width: '14px', height: '14px' }} /> : <Copy style={{ width: '14px', height: '14px' }} />}
@@ -341,13 +365,13 @@ export default function DashboardPage() {
                 <div>
                   <label style={labelStyle}>Matière</label>
                   <select style={inputStyle} value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}>
-                    {SUBJECTS.map(s => <option key={s} style={{ background: '#1A0A3C' }}>{s}</option>)}
+                    {SUBJECTS.map(s => <option key={s} value={s} style={{ background: '#1A0A3C' }}>{trSubject(s, isRTL)}</option>)}
                   </select>
                 </div>
                 <div>
                   <label style={labelStyle}>Niveau</label>
                   <select style={inputStyle} value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))}>
-                    {LEVELS.map(l => <option key={l} style={{ background: '#1A0A3C' }}>{l}</option>)}
+                    {LEVELS.map(l => <option key={l} value={l} style={{ background: '#1A0A3C' }}>{trLevel(l, isRTL)}</option>)}
                   </select>
                 </div>
               </div>
@@ -376,7 +400,7 @@ export default function DashboardPage() {
                 <div>
                   <label style={labelStyle}>Wilaya</label>
                   <select style={inputStyle} value={form.wilaya} onChange={e => setForm(f => ({ ...f, wilaya: e.target.value }))}>
-                    {WILAYAS.map(w => <option key={w} style={{ background: '#1A0A3C' }}>{w}</option>)}
+                    {WILAYAS.map(w => <option key={w} value={w} style={{ background: '#1A0A3C' }}>{trWilaya(w, isRTL)}</option>)}
                   </select>
                 </div>
               </div>
@@ -388,6 +412,22 @@ export default function DashboardPage() {
                 <label style={labelStyle}>Description</label>
                 <textarea style={{ ...inputStyle, resize: 'none' }} rows={3} placeholder="Décrivez votre cours..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               </div>
+              {createError && (
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '9px',
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: '12px', padding: '11px 13px',
+                }}>
+                  <span style={{ color: '#f87171', flexShrink: 0, fontSize: '14px', lineHeight: 1.2 }}>⚠</span>
+                  <span style={{ color: '#fca5a5', fontSize: '12.5px', flex: 1, lineHeight: 1.5 }}>
+                    {createError}
+                  </span>
+                  <button
+                    onClick={() => setCreateError(null)}
+                    style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: 0, fontSize: '13px' }}
+                  >✕</button>
+                </div>
+              )}
               <button
                 onClick={handleCreate}
                 disabled={creating || !form.title || !form.dateTime}
@@ -453,6 +493,16 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit / Delete modal */}
+      {editingClasse && (
+        <EditClasseModal
+          classe={editingClasse}
+          onClose={() => setEditingClasse(null)}
+          onSaved={loadData}
+          onDeleted={loadData}
+        />
       )}
 
       <style>{`

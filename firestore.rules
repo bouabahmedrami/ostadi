@@ -2,6 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ═══════════════════════════════════════════════════════
+    // 🔐 ADMIN UNIQUE — verrouillé côté serveur
+    // Personne ne peut se donner ce rôle : il est en dur ici.
+    // ═══════════════════════════════════════════════════════
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == '4bnssIV8FlS80SzaX6ylwc9Fbg92';
+    }
+
     // ── Helpers ──────────────────────────────────────────
     function isAuth() {
       return request.auth != null;
@@ -21,108 +30,135 @@ service cloud.firestore {
 
     // ── Users ─────────────────────────────────────────────
     match /users/{userId} {
-      // Anyone can read public profiles
       allow read: if isAuth();
-      // Only the user themselves can create/update their profile
       allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
-      allow delete: if false;
+      // ⚠️ L'utilisateur NE PEUT PAS modifier son propre rôle
+      allow update: if (isOwner(userId)
+                        && request.resource.data.role == resource.data.role)
+                    || isAdmin();
+      allow delete: if isAdmin();
     }
 
     // ── Classes ───────────────────────────────────────────
     match /classes/{classeId} {
-      // Anyone authenticated can read classes (for search/listing)
       allow read: if isAuth();
-      // Only teachers can create classes
       allow create: if isTeacher()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.price >= 0
         && request.resource.data.title.size() > 0;
-      // Only the teacher who owns the class can update it
-      allow update: if isAuth()
-        && (
-          // Teacher updating their own class
-          (isTeacher() && resource.data.teacherId == request.auth.uid)
-          ||
-          // System fields update (enrolledCount, attendanceCount) by enrolled student
-          (isStudent() && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['enrolledCount', 'attendanceCount']))
-        );
-      allow delete: if isTeacher()
-        && resource.data.teacherId == request.auth.uid;
+      allow update: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == request.auth.uid)
+        || (isStudent() && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['enrolledCount', 'attendanceCount']));
+      allow delete: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }
 
     // ── Enrollments ───────────────────────────────────────
     match /enrollments/{enrollmentId} {
-      // Teacher sees enrollments for their classes
-      allow read: if isAuth() && (
-        isTeacher() ||
-        resource.data.studentId == request.auth.uid
-      );
-      // Only teachers can enroll students (manual enrollment model)
-      allow create: if isTeacher()
-        && exists(/databases/$(database)/documents/classes/$(request.resource.data.classeId))
-        && get(/databases/$(database)/documents/classes/$(request.resource.data.classeId)).data.teacherId == request.auth.uid;
-      // Student can only update their own attendance field
-      allow update: if isAuth() && (
-        (isStudent() && resource.data.studentId == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attended']))
-        ||
-        (isTeacher())
-      );
-      allow delete: if isTeacher();
+      allow read: if isAdmin() || (isAuth() && (
+        isTeacher() || resource.data.studentId == request.auth.uid
+      ));
+      allow create: if isAdmin() || isTeacher();
+      allow update: if isAdmin()
+        || (isStudent() && resource.data.studentId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['attended']))
+        || isTeacher();
+      allow delete: if isAdmin() || isTeacher();
+    }
+
+    // ── Enrollment Requests ───────────────────────────────
+    match /enrollmentRequests/{requestId} {
+      allow read: if isAdmin() || (isAuth() && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.teacherId == request.auth.uid
+      ));
+      allow create: if isAuth()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+      allow delete: if isAdmin() || isTeacher();
     }
 
     // ── Ratings ───────────────────────────────────────────
     match /ratings/{ratingId} {
       allow read: if isAuth();
-      // Only enrolled students can rate, once per class
       allow create: if isStudent()
         && request.resource.data.studentId == request.auth.uid
         && request.resource.data.stars >= 1
-        && request.resource.data.stars <= 5
-        && exists(/databases/$(database)/documents/enrollments/$(request.resource.data.classeId + '_' + request.auth.uid));
-      allow update: if isStudent()
-        && resource.data.studentId == request.auth.uid;
-      allow delete: if false;
+        && request.resource.data.stars <= 5;
+      allow update: if isAdmin()
+        || (isStudent() && resource.data.studentId == request.auth.uid);
+      allow delete: if isAdmin();
     }
 
-    // ── Subscriptions ─────────────────────────────────────
-    match /subscriptions/{subId} {
-      allow read: if isAuth() && resource.data.teacherId == request.auth.uid;
-      allow create, update: if false; // Only via Cloud Functions / admin
-      allow delete: if false;
-    }
-
-    // ── Admin (future) ────────────────────────────────────
-    match /admin/{document=**} {
-      allow read, write: if false; // Locked for now
-    }
-  }
-}
-
-    // ── Messages ──────────────────────────────────────────
+    // ── Messages (chat) ───────────────────────────────────
     match /messages/{messageId} {
-      allow read: if isAuth() && (
-        // Teacher of the class
-        get(/databases/$(database)/documents/classes/$(resource.data.classeId)).data.teacherId == request.auth.uid
-        ||
-        // Enrolled student
-        exists(/databases/$(database)/documents/enrollments/$(resource.data.classeId + '_' + request.auth.uid))
-        ||
-        // Sender themselves
-        resource.data.senderId == request.auth.uid
-      );
+      allow read: if isAdmin() || isAuth();
       allow create: if isAuth()
         && request.resource.data.senderId == request.auth.uid
         && request.resource.data.text.size() > 0
         && request.resource.data.text.size() <= 1000;
-      allow update: if isAuth(); // for marking read
-      allow delete: if false;
+      allow update: if isAuth();
+      allow delete: if isAdmin();
     }
 
-    // ── Chat Rooms ────────────────────────────────────────
     match /chatRooms/{roomId} {
-      allow read: if isAuth();
-      allow write: if isAuth();
+      allow read, write: if isAuth();
     }
+
+    // ── Notifications ─────────────────────────────────────
+    match /notifications/{notifId} {
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.userId == request.auth.uid);
+      allow create: if isAuth();
+      allow update: if isAdmin()
+        || (isAuth() && resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // 🔒 DONNÉES SENSIBLES — admin + propriétaire uniquement
+    // ═══════════════════════════════════════════════════════
+
+    // ── Vérifications (diplômes, pièces d'identité) ───────
+    match /verifications/{verifId} {
+      // Seul l'admin voit TOUS les dossiers.
+      // Le prof ne voit que le sien.
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      // Seul l'admin peut approuver / refuser
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Abonnements (données financières) ─────────────────
+    match /subscriptions/{subId} {
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      // Seul l'admin active un abonnement
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Enregistrements vidéo ─────────────────────────────
+    match /recordings/{recId} {
+      allow read: if isAuth();
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow update, delete: if isAdmin()
+        || (isTeacher() && resource.data.teacherId == request.auth.uid);
+    }
+
+    // ── Collection admin privée (config, logs) ────────────
+    match /adminData/{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

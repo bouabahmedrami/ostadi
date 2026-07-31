@@ -1,9 +1,10 @@
 "use client";
 import { useState, useEffect } from "react";
-import { collection, query, where, getDocs, orderBy } from "firebase/firestore";
+import { collection, query, getDocs, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Classe, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
 import { useLang } from "@/lib/lang-context";
+import { trSubject, trLevel, trWilaya } from "@/lib/i18n/translate";
 import ClasseCard from "@/components/ClasseCard";
 import { Search, X, SlidersHorizontal, MapPin, BookOpen, GraduationCap, User } from "lucide-react";
 
@@ -22,11 +23,11 @@ export default function RecherchePage() {
     setLoading(true);
     setSearched(true);
     try {
-      let q = query(collection(db, "classes"), orderBy("teacherRating", "desc"));
+      const q = query(collection(db, "classes"), orderBy("teacherRating", "desc"));
       const snap = await getDocs(q);
       let all = snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe));
 
-      // Filter client-side for combined search (Firestore has limits on compound queries)
+      // Filtrage côté client (Firestore limite les requêtes composées)
       if (teacherName.trim()) {
         const search = teacherName.trim().toLowerCase();
         all = all.filter(c => c.teacherName.toLowerCase().includes(search));
@@ -95,7 +96,7 @@ export default function RecherchePage() {
                   <label className="ostadi-filter-label"><MapPin size={13} /> {isRTL ? "الولاية" : "Wilaya"}</label>
                   <select value={wilaya} onChange={e => setWilaya(e.target.value)} className="ostadi-search-input">
                     <option value="">{isRTL ? "كل الولايات" : "Toutes les wilayas"}</option>
-                    {WILAYAS.map(w => <option key={w} value={w}>{w}</option>)}
+                    {WILAYAS.map(w => <option key={w} value={w}>{trWilaya(w, isRTL)}</option>)}
                   </select>
                 </div>
 
@@ -103,7 +104,7 @@ export default function RecherchePage() {
                   <label className="ostadi-filter-label"><BookOpen size={13} /> {isRTL ? "المادة" : "Matière"}</label>
                   <select value={subject} onChange={e => setSubject(e.target.value)} className="ostadi-search-input">
                     <option value="">{isRTL ? "كل المواد" : "Toutes les matières"}</option>
-                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                    {SUBJECTS.map(s => <option key={s} value={s}>{trSubject(s, isRTL)}</option>)}
                   </select>
                 </div>
               </div>
@@ -112,7 +113,7 @@ export default function RecherchePage() {
                 <label className="ostadi-filter-label"><GraduationCap size={13} /> {isRTL ? "المستوى" : "Niveau"}</label>
                 <select value={level} onChange={e => setLevel(e.target.value)} className="ostadi-search-input">
                   <option value="">{isRTL ? "كل المستويات" : "Tous les niveaux"}</option>
-                  {LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+                  {LEVELS.map(l => <option key={l} value={l}>{trLevel(l, isRTL)}</option>)}
                 </select>
               </div>
 

@@ -1,11 +1,12 @@
 "use client";
 import { useState, useRef } from "react";
 import { updateUserProfile } from "@/lib/firestore";
+import { useLang } from "@/lib/lang-context";
+import { trWilaya } from "@/lib/i18n/translate";
 import { storage } from "@/lib/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { WILAYAS } from "@/lib/types";
 import { Camera, GraduationCap, Briefcase, MapPin, Save, CheckCircle } from "lucide-react";
-
 interface TeacherProfileFormProps {
   uid: string;
   currentData: {
@@ -20,6 +21,7 @@ interface TeacherProfileFormProps {
 }
 
 export default function TeacherProfileForm({ uid, currentData, onSaved }: TeacherProfileFormProps) {
+  const { isRTL } = useLang();
   const [photoURL, setPhotoURL] = useState(currentData.photoURL || "");
   const [wilaya, setWilaya] = useState(currentData.wilaya || "Alger");
   const [diploma, setDiploma] = useState(currentData.diploma || "");
@@ -28,24 +30,53 @@ export default function TeacherProfileForm({ uid, currentData, onSaved }: Teache
   const [bio, setBio] = useState(currentData.bio || "");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setError(null);
+
+    // Validations absentes auparavant : type et taille
+    if (!file.type.startsWith("image/")) {
+      setError(isRTL ? "الملف يجب أن يكون صورة" : "Le fichier doit être une image");
+      e.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      setError(isRTL
+        ? `الصورة كبيرة جداً (${mb} ميغا). الحد الأقصى 5 ميغا.`
+        : `Image trop lourde (${mb} Mo). Maximum 5 Mo.`);
+      e.target.value = "";
+      return;
+    }
+
     setUploading(true);
     try {
-      const storageRef = ref(storage, `profile-photos/${uid}_${Date.now()}`);
+      const ext = file.name.split(".").pop() || "jpg";
+      const storageRef = ref(storage, `profile-photos/${uid}_${Date.now()}.${ext}`);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
       setPhotoURL(url);
+    } catch (err: any) {
+      // ⚠️ AVANT : try/finally sans catch — échec totalement silencieux
+      console.error("Upload photo échoué :", err);
+      setError(
+        err?.code === "storage/unauthorized"
+          ? (isRTL ? "غير مصرح. تحقق من قواعد Storage." : "Non autorisé. Vérifiez les règles Storage.")
+          : (isRTL ? "فشل رفع الصورة." : "Échec du téléversement.")
+      );
+      e.target.value = "";
     } finally {
       setUploading(false);
     }
   }
 
   async function handleSave() {
+    setError(null);
     setSaving(true);
     try {
       await updateUserProfile(uid, {
@@ -55,6 +86,11 @@ export default function TeacherProfileForm({ uid, currentData, onSaved }: Teache
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       onSaved?.();
+    } catch (err: any) {
+      console.error("Sauvegarde du profil échouée :", err);
+      setError(isRTL
+        ? "فشل الحفظ. تحقق من اتصالك."
+        : "Échec de l'enregistrement. Vérifiez votre connexion.");
     } finally {
       setSaving(false);
     }
@@ -62,8 +98,29 @@ export default function TeacherProfileForm({ uid, currentData, onSaved }: Teache
 
   return (
     <div className="ostadi-profile-card">
-      <h2 className="ostadi-profile-title">Mon profil professionnel</h2>
-      <p className="ostadi-profile-subtitle">Ces informations sont visibles par les élèves et parents</p>
+      <h2 className="ostadi-profile-title">
+        {isRTL ? "ملفي المهني" : "Mon profil professionnel"}
+      </h2>
+      <p className="ostadi-profile-subtitle">
+        {isRTL
+          ? "هذه المعلومات مرئية للطلاب والأولياء"
+          : "Ces informations sont visibles par les élèves et parents"}
+      </p>
+
+      {error && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '9px',
+          background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: '12px', padding: '11px 13px', margin: '14px 0',
+        }}>
+          <span style={{ color: '#f87171', flexShrink: 0 }}>⚠</span>
+          <span style={{ color: '#fca5a5', fontSize: '12.5px', flex: 1, lineHeight: 1.5 }}>{error}</span>
+          <button
+            onClick={() => setError(null)}
+            style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: 0 }}
+          >✕</button>
+        </div>
+      )}
 
       {/* Photo upload */}
       <div className="ostadi-photo-section">
@@ -91,7 +148,7 @@ export default function TeacherProfileForm({ uid, currentData, onSaved }: Teache
         <div>
           <label className="ostadi-label"><MapPin size={13} /> Wilaya</label>
           <select value={wilaya} onChange={e => setWilaya(e.target.value)} className="ostadi-input">
-            {WILAYAS.map(w => <option key={w} value={w}>{w}</option>)}
+            {WILAYAS.map(w => <option key={w} value={w}>{trWilaya(w, isRTL)}</option>)}
           </select>
         </div>
 

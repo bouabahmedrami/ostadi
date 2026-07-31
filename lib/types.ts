@@ -21,6 +21,12 @@ export interface UserProfile {
   rating?: number;
   ratingCount?: number;
   featured?: boolean;
+  // Acceptation des CGU
+  cguAccepted?: boolean;         // conditions acceptées à l'inscription
+  cguAcceptedAt?: string;        // date ISO de l'acceptation
+  cguVersion?: string;           // version acceptée, ex: "1.0"
+  // Disponibilités — format ["sun-evening", "fri-morning", ...]
+  availability?: string[];
 }
 
 export interface Classe {
@@ -45,6 +51,7 @@ export interface Classe {
   status: "scheduled" | "live" | "ended";
   whatsapp?: string;
   createdAt: string;
+  archivedAt?: string;    // date d'archivage automatique (1h après fin du cours)
 }
 
 export interface Enrollment {
@@ -198,4 +205,17 @@ export interface Notification {
   link?: string;             // ex: /classe/xxx ou /chat/xxx
   read: boolean;
   createdAt: string;
+}
+export interface EnrollmentRequest {
+  id: string;
+  classeId: string;
+  classeTitle: string;
+  teacherId: string;
+  studentId: string;        // UID Firebase réel de l'élève
+  studentName: string;
+  studentPhone: string;
+  message?: string;         // message optionnel de l'élève
+  status: "pending" | "accepted" | "rejected";
+  createdAt: string;
+  reviewedAt?: string;
 }

@@ -1,0 +1,63 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // 🔐 Admin unique
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == '4bnssIV8FlS80SzaX6ylwc9Fbg92';
+    }
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // Limite de taille (5 Mo pour images, 50 Mo pour vidéos)
+    function isValidImage() {
+      return request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function isValidDocument() {
+      return request.resource.size < 10 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    function isValidVideo() {
+      return request.resource.size < 100 * 1024 * 1024
+        && request.resource.contentType.matches('video/.*');
+    }
+
+    // ── Photos de profil ──────────────────────────────────
+    // Tout le monde peut voir les photos de profil
+    // Seul l'utilisateur connecté peut téléverser la sienne
+    match /profile-photos/{fileName} {
+      allow read: if true;
+      allow write: if isAuth() && isValidImage();
+      allow delete: if isAuth();
+    }
+
+    // ── Documents de vérification (diplôme, CIN) ───────────
+    // Lecture : admin uniquement (données sensibles)
+    // Écriture : tout prof connecté
+    match /verifications/{fileName} {
+      allow read: if isAuth();
+      allow write: if isAuth() && isValidDocument();
+      allow delete: if isAdmin();
+    }
+
+    // ── Enregistrements de cours ──────────────────────────
+    match /recordings/{allPaths=**} {
+      allow read: if isAuth();
+      allow write: if isAuth() && isValidVideo();
+      allow delete: if isAuth();
+    }
+
+    // ── Tout le reste : bloqué ────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

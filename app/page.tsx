@@ -1,35 +1,133 @@
 "use client";
-import { useState, useEffect } from "react";
-import { Search, Users, Zap, ChevronDown, Star, BookOpen, TrendingUp } from "lucide-react";
-import { getClasses } from "@/lib/firestore";
-import { Classe, SUBJECTS, LEVELS } from "@/lib/types";
+import { useState, useEffect, useMemo } from "react";
+import { collection, getDocs, query, orderBy } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { autoArchiveFinishedClasses } from "@/lib/firestore";
+import { Classe, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
 import { useLang } from "@/lib/lang-context";
 import ClasseCard from "@/components/ClasseCard";
 import TopTeachers from "@/components/TopTeachers";
 import Link from "next/link";
+import {
+  Search, X, SlidersHorizontal, Users, Zap, Star, BookOpen,
+  TrendingUp, MapPin, Calendar, Banknote, ArrowUpDown, RotateCcw,
+} from "lucide-react";
+import { trSubject, trLevel, trWilaya } from "@/lib/i18n/translate";
+type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
 
 export default function HomePage() {
   const { t, isRTL } = useLang();
-  const [classes, setClasses] = useState<Classe[]>([]);
+  const [allClasses, setAllClasses] = useState<Classe[]>([]);
   const [loading, setLoading] = useState(true);
+  const [mounted, setMounted] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  // ── Filtres ──────────────────────────────────────────
+  const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("");
   const [level, setLevel] = useState("");
-  const [mounted, setMounted] = useState(false);
+  const [wilaya, setWilaya] = useState("");
+  const [teacher, setTeacher] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [minRating, setMinRating] = useState(0);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [sortBy, setSortBy] = useState<SortKey>("rating");
 
-  useEffect(() => { setMounted(true); }, []);
-  useEffect(() => { loadClasses(); }, [subject, level]);
+  useEffect(() => { setMounted(true); loadClasses(); }, []);
 
   async function loadClasses() {
     setLoading(true);
+    setLoadError(false);
     try {
-      const filters: Record<string, string> = {};
-      if (subject) filters.subject = subject;
-      if (level) filters.level = level;
-      const data = await getClasses(Object.keys(filters).length ? filters : undefined);
-      setClasses(data);
-    } catch { setClasses([]); }
+      await autoArchiveFinishedClasses();
+      const snap = await getDocs(query(collection(db, "classes"), orderBy("dateTime", "asc")));
+      setAllClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe)));
+    } catch (err) {
+      console.error("Chargement des cours échoué :", err);
+      setAllClasses([]);
+      setLoadError(true);
+    }
     finally { setLoading(false); }
   }
+
+  // ── Filtrage + tri côté client (instantané) ──────────
+  const filtered = useMemo(() => {
+    let list = [...allClasses];
+
+    // Recherche globale : titre, matière, prof, description
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter(c =>
+        (c.title || "").toLowerCase().includes(q) ||
+        (c.subject || "").toLowerCase().includes(q) ||
+        (c.teacherName || "").toLowerCase().includes(q) ||
+        (c.description || "").toLowerCase().includes(q) ||
+        (c.level || "").toLowerCase().includes(q) ||
+        (c.wilaya || "").toLowerCase().includes(q) ||
+        // Recherche aussi sur les libellés traduits :
+        // un élève arabophone qui tape « الرياضيات » doit trouver « Mathématiques »
+        trSubject(c.subject || "", isRTL).toLowerCase().includes(q) ||
+        trLevel(c.level || "", isRTL).toLowerCase().includes(q) ||
+        trWilaya(c.wilaya || "", isRTL).toLowerCase().includes(q)
+      );
+    }
+    if (subject) list = list.filter(c => c.subject === subject);
+    if (level) list = list.filter(c => c.level === level);
+    if (wilaya) list = list.filter(c => c.wilaya === wilaya);
+    if (teacher.trim()) {
+      const q = teacher.trim().toLowerCase();
+      list = list.filter(c => (c.teacherName || "").toLowerCase().includes(q));
+    }
+    if (minPrice) list = list.filter(c => (c.price || 0) >= Number(minPrice));
+    if (maxPrice) list = list.filter(c => (c.price || 0) <= Number(maxPrice));
+    if (minRating > 0) list = list.filter(c => (c.teacherRating || 0) >= minRating);
+    if (dateFrom) list = list.filter(c => new Date(c.dateTime) >= new Date(dateFrom));
+    if (dateTo) {
+      const end = new Date(dateTo); end.setHours(23, 59, 59);
+      list = list.filter(c => new Date(c.dateTime) <= end);
+    }
+
+    // Tri
+    switch (sortBy) {
+      case "rating": list.sort((a, b) => (b.teacherRating || 0) - (a.teacherRating || 0)); break;
+      case "price_asc": list.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
+      case "price_desc": list.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
+      case "date_asc": list.sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()); break;
+      case "date_desc": list.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()); break;
+      case "popular": list.sort((a, b) => (b.enrolledCount || 0) - (a.enrolledCount || 0)); break;
+    }
+    return list;
+  }, [allClasses, search, subject, level, wilaya, teacher, minPrice, maxPrice, minRating, dateFrom, dateTo, sortBy, isRTL]);
+
+  // Statistiques réelles calculées depuis les cours chargés
+  const realStats = useMemo(() => {
+    const teacherIds = new Set(allClasses.map(c => c.teacherId).filter(Boolean));
+    const rated = allClasses.filter(c => (c.teacherRating || 0) > 0);
+    const avg = rated.length
+      ? Math.round((rated.reduce((s, c) => s + (c.teacherRating || 0), 0) / rated.length) * 10) / 10
+      : 0;
+    return { teachers: teacherIds.size, avgRating: avg };
+  }, [allClasses]);
+
+  const activeCount = [subject, level, wilaya, teacher, minPrice, maxPrice, dateFrom, dateTo].filter(Boolean).length + (minRating > 0 ? 1 : 0);
+
+  function resetAll() {
+    setSearch(""); setSubject(""); setLevel(""); setWilaya(""); setTeacher("");
+    setMinPrice(""); setMaxPrice(""); setMinRating(0); setDateFrom(""); setDateTo("");
+    setSortBy("rating");
+  }
+
+  const sortLabels: Record<SortKey, string> = {
+    rating: isRTL ? "الأعلى تقييماً" : "Mieux notés",
+    popular: isRTL ? "الأكثر شعبية" : "Plus populaires",
+    price_asc: isRTL ? "السعر ↑" : "Prix croissant",
+    price_desc: isRTL ? "السعر ↓" : "Prix décroissant",
+    date_asc: isRTL ? "الأقرب" : "Date proche",
+    date_desc: isRTL ? "الأبعد" : "Date lointaine",
+  };
 
   return (
     <div className="ostadi-page" dir={isRTL ? "rtl" : "ltr"}>
@@ -38,7 +136,6 @@ export default function HomePage() {
       <section className="ostadi-hero">
         <div className="ostadi-orb ostadi-orb-1" />
         <div className="ostadi-orb ostadi-orb-2" />
-        <div className="ostadi-orb ostadi-orb-3" />
 
         <div className={`ostadi-hero-inner ${mounted ? 'ostadi-fade-in' : 'ostadi-fade-out'}`}>
           <div className="ostadi-hero-badge">
@@ -53,39 +150,130 @@ export default function HomePage() {
             <span className="ostadi-text-white">{t.home.title2}</span>
           </h1>
 
-          <p className="ostadi-hero-subtitle">{t.home.subtitle}</p>
-
-          {/* Search bar */}
-          <div className="ostadi-search-box">
-            <div className="ostadi-search-grid">
-              <div className="ostadi-select-wrap">
-                <select value={level} onChange={(e) => setLevel(e.target.value)} className="ostadi-select">
-                  <option value="">{t.home.searchLevel}</option>
-                  {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
-                </select>
-                <ChevronDown className="ostadi-select-chevron" size={16} />
-              </div>
-              <div className="ostadi-select-wrap">
-                <select value={subject} onChange={(e) => setSubject(e.target.value)} className="ostadi-select">
-                  <option value="">{t.home.searchSubject}</option>
-                  {SUBJECTS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <ChevronDown className="ostadi-select-chevron" size={16} />
-              </div>
-            </div>
-            <button onClick={loadClasses} className="ostadi-search-btn">
-              <Search size={16} />
-              {t.home.searchBtn}
+          {/* ── BARRE DE RECHERCHE PRINCIPALE ── */}
+          <div className="ostadi-search-main">
+            <Search size={18} className="ostadi-search-icon" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={isRTL ? "ابحث عن درس، مادة، أو أستاذ..." : "Rechercher un cours, une matière ou un professeur..."}
+              className="ostadi-search-input-main"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} className="ostadi-search-clear">
+                <X size={16} />
+              </button>
+            )}
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`ostadi-filter-toggle ${activeCount > 0 ? 'ostadi-filter-toggle-active' : ''}`}
+            >
+              <SlidersHorizontal size={15} />
+              <span className="ostadi-filter-toggle-label">{isRTL ? "فلاتر" : "Filtres"}</span>
+              {activeCount > 0 && <span className="ostadi-filter-count">{activeCount}</span>}
             </button>
           </div>
+
+          {/* ── PANNEAU DE FILTRES ── */}
+          {showFilters && (
+            <div className="ostadi-filters-panel">
+              <div className="ostadi-filters-grid">
+                {/* Matière */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><BookOpen size={12} /> {isRTL ? "المادة" : "Matière"}</label>
+                  <select value={subject} onChange={e => setSubject(e.target.value)} className="ostadi-filter-input">
+                    <option value="">{isRTL ? "كل المواد" : "Toutes"}</option>
+                    {SUBJECTS.map(s => <option key={s} value={s}>{trSubject(s, isRTL)}</option>)}
+                  </select>
+                </div>
+
+                {/* Niveau */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><TrendingUp size={12} /> {isRTL ? "المستوى" : "Niveau"}</label>
+                  <select value={level} onChange={e => setLevel(e.target.value)} className="ostadi-filter-input">
+                    <option value="">{isRTL ? "كل المستويات" : "Tous"}</option>
+                    {LEVELS.map(l => <option key={l} value={l}>{trLevel(l, isRTL)}</option>)}
+                  </select>
+                </div>
+
+                {/* Wilaya */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><MapPin size={12} /> {isRTL ? "الولاية" : "Wilaya"}</label>
+                  <select value={wilaya} onChange={e => setWilaya(e.target.value)} className="ostadi-filter-input">
+                    <option value="">{isRTL ? "كل الولايات" : "Toutes"}</option>
+                    {WILAYAS.map(w => <option key={w} value={w}>{trWilaya(w, isRTL)}</option>)}
+                  </select>
+                </div>
+
+                {/* Professeur */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><Users size={12} /> {isRTL ? "الأستاذ" : "Professeur"}</label>
+                  <input
+                    type="text" value={teacher} onChange={e => setTeacher(e.target.value)}
+                    placeholder={isRTL ? "اسم الأستاذ" : "Nom du prof"}
+                    className="ostadi-filter-input"
+                  />
+                </div>
+
+                {/* Prix min/max */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><Banknote size={12} /> {isRTL ? "السعر (دج)" : "Prix (DA)"}</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="number" value={minPrice} onChange={e => setMinPrice(e.target.value)}
+                      placeholder="Min" className="ostadi-filter-input" style={{ flex: 1 }}
+                    />
+                    <input
+                      type="number" value={maxPrice} onChange={e => setMaxPrice(e.target.value)}
+                      placeholder="Max" className="ostadi-filter-input" style={{ flex: 1 }}
+                    />
+                  </div>
+                </div>
+
+                {/* Dates */}
+                <div className="ostadi-filter-field">
+                  <label className="ostadi-filter-label"><Calendar size={12} /> {isRTL ? "التاريخ" : "Période"}</label>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="ostadi-filter-input" style={{ flex: 1 }} />
+                    <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="ostadi-filter-input" style={{ flex: 1 }} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Étoiles minimum */}
+              <div className="ostadi-filter-field" style={{ marginTop: '14px' }}>
+                <label className="ostadi-filter-label"><Star size={12} /> {isRTL ? "التقييم الأدنى" : "Note minimum"}</label>
+                <div className="ostadi-stars-row">
+                  {[0, 3, 3.5, 4, 4.5].map(r => (
+                    <button
+                      key={r}
+                      onClick={() => setMinRating(r)}
+                      className={`ostadi-star-chip ${minRating === r ? 'ostadi-star-chip-active' : ''}`}
+                    >
+                      {r === 0 ? (isRTL ? "الكل" : "Toutes") : <>★ {r}+</>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reset */}
+              {activeCount > 0 && (
+                <button onClick={resetAll} className="ostadi-reset-all">
+                  <RotateCcw size={13} /> {isRTL ? "إعادة تعيين كل الفلاتر" : "Réinitialiser tous les filtres"}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Stats */}
           <div className="ostadi-stats-row">
             {[
-              { icon: <BookOpen size={15} />, value: "10+", label: t.home.stats.subjects },
-              { icon: <Users size={15} />, value: "50+", label: t.home.stats.teachers },
-              { icon: <Star size={15} />, value: "4.8★", label: t.home.stats.rating },
-              { icon: <Zap size={15} />, value: "Live", label: t.home.stats.live },
+              { icon: <BookOpen size={15} />, value: `${allClasses.length}`, label: isRTL ? "درس متاح" : "Cours" },
+              { icon: <Users size={15} />, value: `${realStats.teachers}`, label: t.home.stats.teachers },
+              ...(realStats.avgRating > 0
+                ? [{ icon: <Star size={15} />, value: `${realStats.avgRating}★`, label: t.home.stats.rating }]
+                : []),
             ].map((s, i) => (
               <div key={i} className="ostadi-stat-pill">
                 <span className="ostadi-stat-icon">{s.icon}</span>
@@ -100,30 +288,51 @@ export default function HomePage() {
       {/* ═══ TOP TEACHERS ═══ */}
       <section className="ostadi-section">
         <div className="ostadi-section-header">
-          <div className="ostadi-section-icon-badge">
-            <TrendingUp size={16} style={{ color: '#FF8C00' }} />
-          </div>
-          <h2 className="ostadi-section-title">
-            {isRTL ? "أفضل الأساتذة" : "Meilleurs Professeurs"}
-          </h2>
+          <div className="ostadi-section-icon-badge"><TrendingUp size={16} style={{ color: '#FF8C00' }} /></div>
+          <h2 className="ostadi-section-title">{isRTL ? "أفضل الأساتذة" : "Meilleurs Professeurs"}</h2>
         </div>
         <TopTeachers />
       </section>
 
-      {/* ═══ CLASSES ═══ */}
+      {/* ═══ RÉSULTATS ═══ */}
       <section className="ostadi-section">
-        <div className="ostadi-section-header" style={{ justifyContent: 'space-between' }}>
-          <h2 className="ostadi-section-title" style={{ margin: 0 }}>
-            {subject || level
-              ? `${t.home.courses} — ${level || ""}${subject ? ` · ${subject}` : ""}`
-              : t.home.allCourses}
-          </h2>
-          {(subject || level) && (
-            <button onClick={() => { setSubject(""); setLevel(""); }} className="ostadi-reset-btn">
-              {t.home.reset}
-            </button>
-          )}
+        <div className="ostadi-results-header">
+          <div>
+            <h2 className="ostadi-section-title" style={{ margin: 0 }}>
+              {filtered.length} {isRTL ? "درس" : filtered.length > 1 ? "cours trouvés" : "cours trouvé"}
+            </h2>
+            {(search || activeCount > 0) && (
+              <p className="ostadi-results-sub">
+                {isRTL ? "نتائج البحث المفلترة" : "Résultats filtrés"}
+              </p>
+            )}
+          </div>
+
+          {/* Tri */}
+          <div className="ostadi-sort-wrap">
+            <ArrowUpDown size={14} style={{ color: '#a78bfa' }} />
+            <select value={sortBy} onChange={e => setSortBy(e.target.value as SortKey)} className="ostadi-sort-select">
+              {(Object.keys(sortLabels) as SortKey[]).map(k => (
+                <option key={k} value={k}>{sortLabels[k]}</option>
+              ))}
+            </select>
+          </div>
         </div>
+
+        {/* Chips des filtres actifs */}
+        {activeCount > 0 && (
+          <div className="ostadi-active-chips">
+            {subject && <FilterChip label={trSubject(subject, isRTL)} onRemove={() => setSubject("")} />}
+            {level && <FilterChip label={trLevel(level, isRTL)} onRemove={() => setLevel("")} />}
+            {wilaya && <FilterChip label={trWilaya(wilaya, isRTL)} onRemove={() => setWilaya("")} />}
+            {teacher && <FilterChip label={`👤 ${teacher}`} onRemove={() => setTeacher("")} />}
+            {minPrice && <FilterChip label={`≥ ${minPrice} DA`} onRemove={() => setMinPrice("")} />}
+            {maxPrice && <FilterChip label={`≤ ${maxPrice} DA`} onRemove={() => setMaxPrice("")} />}
+            {minRating > 0 && <FilterChip label={`★ ${minRating}+`} onRemove={() => setMinRating(0)} />}
+            {dateFrom && <FilterChip label={`Dès ${dateFrom}`} onRemove={() => setDateFrom("")} />}
+            {dateTo && <FilterChip label={`Jusqu'au ${dateTo}`} onRemove={() => setDateTo("")} />}
+          </div>
+        )}
 
         {loading ? (
           <div className="ostadi-classes-grid">
@@ -135,29 +344,33 @@ export default function HomePage() {
               </div>
             ))}
           </div>
-        ) : classes.length === 0 ? (
+        ) : loadError ? (
           <div className="ostadi-empty-state">
-            <div className="ostadi-empty-icon"><BookOpen size={32} /></div>
-            <p className="ostadi-empty-title">{t.home.noCourses}</p>
-            <p className="ostadi-empty-hint">{t.home.noCoursesHint}</p>
-            <div style={{ marginTop: '32px', maxWidth: '380px', marginInline: 'auto', textAlign: isRTL ? 'right' : 'left' }}>
-              <ClasseCard classe={{
-                id: "demo", teacherId: "t1", teacherName: "م. عمراني", teacherRating: 4.8,
-                title: "مراجعة بكالوريا — رياضيات",
-                subject: "Mathématiques", level: "Terminale",
-                dateTime: new Date(Date.now() + 86400000).toISOString(),
-                durationMinutes: 60, price: 500, priceType: "session",
-                description: "درس مكثف للمراجعة لمترشحي البكالوريا.",
-                jitsiRoom: "ostadi-demo", enrolledCount: 12, attendanceCount: 10,
-                wilaya: "Alger", status: "scheduled",
-                whatsapp: "213XXXXXXXXX", createdAt: new Date().toISOString(),
-              }} />
-              <p className="ostadi-demo-label">{t.home.demo}</p>
-            </div>
+            <div className="ostadi-empty-icon"><RotateCcw size={30} /></div>
+            <p className="ostadi-empty-title">
+              {isRTL ? "تعذّر تحميل الدروس" : "Impossible de charger les cours"}
+            </p>
+            <p className="ostadi-empty-hint">
+              {isRTL ? "تحقق من اتصالك بالإنترنت" : "Vérifiez votre connexion internet"}
+            </p>
+            <button onClick={loadClasses} className="ostadi-reset-all" style={{ margin: '20px auto 0' }}>
+              <RotateCcw size={13} /> {isRTL ? "إعادة المحاولة" : "Réessayer"}
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="ostadi-empty-state">
+            <div className="ostadi-empty-icon"><Search size={30} /></div>
+            <p className="ostadi-empty-title">{isRTL ? "لا توجد نتائج" : "Aucun cours ne correspond"}</p>
+            <p className="ostadi-empty-hint">{isRTL ? "جرّب تعديل الفلاتر أو البحث" : "Essayez d'élargir vos critères de recherche"}</p>
+            {(search || activeCount > 0) && (
+              <button onClick={resetAll} className="ostadi-reset-all" style={{ margin: '20px auto 0' }}>
+                <RotateCcw size={13} /> {isRTL ? "إعادة تعيين" : "Réinitialiser"}
+              </button>
+            )}
           </div>
         ) : (
           <div className="ostadi-classes-grid">
-            {classes.map((c) => <ClasseCard key={c.id} classe={c} />)}
+            {filtered.map(c => <ClasseCard key={c.id} classe={c} />)}
           </div>
         )}
       </section>
@@ -170,16 +383,13 @@ export default function HomePage() {
           <p className="ostadi-cta-subtitle">
             {t.home.ctaSubtitle} <span className="ostadi-text-gradient" style={{ fontWeight: 800 }}>Ostadi</span>.
           </p>
-          <Link href="/auth?mode=register&role=teacher" className="ostadi-cta-btn">
-            {t.home.ctaBtn}
-          </Link>
+          <Link href="/auth?mode=register&role=teacher" className="ostadi-cta-btn">{t.home.ctaBtn}</Link>
         </div>
       </section>
 
       <style jsx global>{`
         .ostadi-page {
-          background: #0A0014;
-          min-height: 100vh;
+          background: #0A0014; min-height: 100vh;
           background-image:
             radial-gradient(circle at 15% 20%, rgba(124,58,237,0.1) 0%, transparent 45%),
             radial-gradient(circle at 85% 15%, rgba(255,140,0,0.06) 0%, transparent 45%),
@@ -188,85 +398,146 @@ export default function HomePage() {
           background-size: auto, auto, 44px 44px, 44px 44px;
           overflow-x: hidden;
         }
-
-        .ostadi-hero { position: relative; overflow: hidden; padding: 72px 16px 56px; }
+        .ostadi-hero { position: relative; overflow: hidden; padding: 60px 16px 40px; }
         .ostadi-orb { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; }
-        .ostadi-orb-1 { top: -80px; left: 10%; width: 320px; height: 320px; background: rgba(124,58,237,0.18); animation: floatOrb 8s ease-in-out infinite; }
-        .ostadi-orb-2 { top: 40px; right: 8%; width: 240px; height: 240px; background: rgba(255,140,0,0.1); animation: floatOrb 10s ease-in-out infinite reverse; }
-        .ostadi-orb-3 { bottom: -100px; left: 50%; width: 280px; height: 280px; background: rgba(59,130,246,0.08); animation: floatOrb 12s ease-in-out infinite; }
-        @keyframes floatOrb { 0%,100% { transform: translate(0,0); } 50% { transform: translate(20px,-20px); } }
-
-        .ostadi-hero-inner { position: relative; max-width: 720px; margin: 0 auto; text-align: center; }
+        .ostadi-orb-1 { top: -80px; left: 10%; width: 320px; height: 320px; background: rgba(124,58,237,0.18); }
+        .ostadi-orb-2 { top: 40px; right: 8%; width: 240px; height: 240px; background: rgba(255,140,0,0.1); }
+        .ostadi-hero-inner { position: relative; max-width: 820px; margin: 0 auto; text-align: center; }
         .ostadi-fade-in { opacity: 1; transform: translateY(0); transition: opacity 0.6s ease, transform 0.6s ease; }
         .ostadi-fade-out { opacity: 0; transform: translateY(16px); }
-
         .ostadi-hero-badge {
           display: inline-flex; align-items: center; gap: 8px;
           background: rgba(124,58,237,0.15); border: 1px solid rgba(168,85,247,0.3);
           border-radius: 999px; padding: 8px 18px; font-size: 13px; font-weight: 600;
-          color: #d8b4fe; margin-bottom: 28px; backdrop-filter: blur(10px);
+          color: #d8b4fe; margin-bottom: 22px;
         }
-
-        .ostadi-hero-title { font-size: 42px; font-weight: 900; line-height: 1.15; letter-spacing: -1.5px; margin: 0 0 18px; }
-        @media (min-width: 640px) { .ostadi-hero-title { font-size: 54px; } }
+        .ostadi-hero-title { font-size: 38px; font-weight: 900; line-height: 1.15; letter-spacing: -1.5px; margin: 0 0 26px; }
+        @media (min-width: 640px) { .ostadi-hero-title { font-size: 48px; } }
         .ostadi-text-white { color: white; }
-        .ostadi-text-gradient {
-          background: linear-gradient(135deg, #FF8C00, #FFB347);
-          -webkit-background-clip: text; background-clip: text; color: transparent;
-        }
+        .ostadi-text-gradient { background: linear-gradient(135deg, #FF8C00, #FFB347); -webkit-background-clip: text; background-clip: text; color: transparent; }
 
-        .ostadi-hero-subtitle { color: rgba(196,181,253,0.75); font-size: 16px; line-height: 1.7; margin: 0 0 36px; max-width: 500px; margin-inline: auto; }
-
-        .ostadi-search-box {
+        /* ── Barre de recherche principale ── */
+        .ostadi-search-main {
+          display: flex; align-items: center; gap: 8px;
           background: linear-gradient(145deg, rgba(20,8,45,0.95), rgba(15,5,30,0.95));
-          border: 1px solid rgba(124,58,237,0.3);
-          border-radius: 22px; padding: 14px; max-width: 560px; margin: 0 auto;
-          box-shadow: 0 20px 60px rgba(124,58,237,0.15), inset 0 1px 0 rgba(255,255,255,0.04);
-          backdrop-filter: blur(20px);
+          border: 1px solid rgba(124,58,237,0.35); border-radius: 16px;
+          padding: 8px 8px 8px 16px; max-width: 700px; margin: 0 auto;
+          box-shadow: 0 12px 40px rgba(124,58,237,0.15);
         }
-        .ostadi-search-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-        .ostadi-select-wrap { position: relative; }
-        .ostadi-select {
-          width: 100%; background: rgba(26,10,60,0.8); border: 1px solid rgba(124,58,237,0.25);
-          border-radius: 14px; padding: 13px 34px 13px 14px; font-size: 13.5px; color: white;
-          appearance: none; outline: none; cursor: pointer; transition: border-color 0.2s ease;
-          font-family: inherit;
+        .ostadi-search-icon { color: #a78bfa; flex-shrink: 0; }
+        .ostadi-search-input-main {
+          flex: 1; background: transparent; border: none; outline: none;
+          color: white; font-size: 14.5px; font-family: inherit; padding: 10px 0;
         }
-        .ostadi-select:hover, .ostadi-select:focus { border-color: rgba(168,85,247,0.5); }
-        .ostadi-select-chevron { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: #a78bfa; pointer-events: none; }
-        [dir="rtl"] .ostadi-select-chevron { right: auto; left: 12px; }
-        [dir="rtl"] .ostadi-select { padding: 13px 14px 13px 34px; }
+        .ostadi-search-input-main::placeholder { color: #6d28d9; }
+        .ostadi-search-clear {
+          background: rgba(124,58,237,0.2); border: none; color: #a78bfa;
+          width: 26px; height: 26px; border-radius: 8px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .ostadi-filter-toggle {
+          display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+          background: rgba(124,58,237,0.2); border: 1px solid rgba(168,85,247,0.3);
+          color: #c4b5fd; font-weight: 700; font-size: 13px;
+          padding: 11px 16px; border-radius: 12px; cursor: pointer; transition: all 0.2s ease;
+        }
+        .ostadi-filter-toggle:hover { background: rgba(124,58,237,0.3); }
+        .ostadi-filter-toggle-active { background: #FF8C00; border-color: #FF8C00; color: white; }
+        .ostadi-filter-toggle-label { display: none; }
+        @media (min-width: 560px) { .ostadi-filter-toggle-label { display: inline; } }
+        .ostadi-filter-count {
+          background: rgba(255,255,255,0.25); color: white; font-size: 10px; font-weight: 800;
+          min-width: 18px; height: 18px; border-radius: 999px;
+          display: flex; align-items: center; justify-content: center; padding: 0 5px;
+        }
 
-        .ostadi-search-btn {
-          width: 100%; display: flex; align-items: center; justify-content: center; gap: 9px;
-          background: linear-gradient(135deg, #FF8C00, #FF6B00); color: white; font-weight: 800;
-          padding: 14px; border-radius: 14px; border: none; cursor: pointer; font-size: 14.5px;
-          box-shadow: 0 8px 24px rgba(255,140,0,0.35); transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+        /* ── Panneau filtres ── */
+        .ostadi-filters-panel {
+          background: linear-gradient(145deg, rgba(20,8,45,0.95), rgba(15,5,30,0.95));
+          border: 1px solid rgba(124,58,237,0.3); border-radius: 16px;
+          padding: 18px; max-width: 700px; margin: 12px auto 0; text-align: left;
+          animation: slideDown 0.25s ease;
         }
-        .ostadi-search-btn:hover { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 30px rgba(255,140,0,0.45); }
-        .ostadi-search-btn:active { transform: scale(0.98); }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+        .ostadi-filters-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 560px) { .ostadi-filters-grid { grid-template-columns: 1fr 1fr; } }
+        @media (min-width: 860px) { .ostadi-filters-grid { grid-template-columns: 1fr 1fr 1fr; } }
+        .ostadi-filter-field { display: flex; flex-direction: column; gap: 6px; }
+        .ostadi-filter-label {
+          display: flex; align-items: center; gap: 5px;
+          color: #a78bfa; font-size: 11.5px; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.4px;
+        }
+        .ostadi-filter-input {
+          width: 100%; background: rgba(26,10,60,0.7); border: 1px solid rgba(124,58,237,0.25);
+          border-radius: 10px; padding: 9px 11px; font-size: 13px; color: white;
+          outline: none; font-family: inherit; box-sizing: border-box; transition: border-color 0.2s ease;
+        }
+        .ostadi-filter-input:focus { border-color: rgba(255,140,0,0.5); }
+        .ostadi-filter-input::placeholder { color: #6d28d9; }
 
-        .ostadi-stats-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 40px; }
+        .ostadi-stars-row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .ostadi-star-chip {
+          background: rgba(26,10,60,0.7); border: 1px solid rgba(124,58,237,0.25);
+          color: #a78bfa; font-size: 12px; font-weight: 600;
+          padding: 7px 13px; border-radius: 9px; cursor: pointer; transition: all 0.2s ease;
+        }
+        .ostadi-star-chip-active { background: rgba(255,140,0,0.18); border-color: #FF8C00; color: #FF8C00; }
+
+        .ostadi-reset-all {
+          display: flex; align-items: center; gap: 6px; margin-top: 14px;
+          background: transparent; border: 1px solid rgba(239,68,68,0.3);
+          color: #f87171; font-size: 12px; font-weight: 600;
+          padding: 8px 14px; border-radius: 9px; cursor: pointer; transition: all 0.2s ease;
+        }
+        .ostadi-reset-all:hover { background: rgba(239,68,68,0.1); }
+
+        .ostadi-stats-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 28px; }
         .ostadi-stat-pill {
           display: flex; align-items: center; gap: 7px;
           background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.18);
-          border-radius: 999px; padding: 9px 16px; transition: all 0.2s ease;
+          border-radius: 999px; padding: 8px 15px;
         }
-        .ostadi-stat-pill:hover { background: rgba(124,58,237,0.15); transform: translateY(-2px); }
         .ostadi-stat-icon { color: #FF8C00; display: flex; }
-        .ostadi-stat-value { color: white; font-weight: 800; font-size: 13.5px; }
-        .ostadi-stat-label { color: #a78bfa; font-size: 12.5px; }
+        .ostadi-stat-value { color: white; font-weight: 800; font-size: 13px; }
+        .ostadi-stat-label { color: #a78bfa; font-size: 12px; }
 
-        .ostadi-section { max-width: 1152px; margin: 0 auto; padding: 44px 16px; }
-        .ostadi-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+        .ostadi-section { max-width: 1152px; margin: 0 auto; padding: 32px 16px; }
+        .ostadi-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
         .ostadi-section-icon-badge {
           width: 34px; height: 34px; border-radius: 10px;
           background: linear-gradient(135deg, rgba(255,140,0,0.2), rgba(255,140,0,0.05));
           display: flex; align-items: center; justify-content: center;
         }
-        .ostadi-section-title { font-size: 21px; font-weight: 800; color: white; letter-spacing: -0.3px; }
-        .ostadi-reset-btn { color: #a78bfa; font-size: 13px; background: none; border: none; cursor: pointer; text-decoration: underline; }
-        .ostadi-reset-btn:hover { color: white; }
+        .ostadi-section-title { font-size: 20px; font-weight: 800; color: white; letter-spacing: -0.3px; }
+
+        .ostadi-results-header {
+          display: flex; align-items: flex-end; justify-content: space-between;
+          gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .ostadi-results-sub { color: #8b7bb8; font-size: 12.5px; margin: 3px 0 0; }
+        .ostadi-sort-wrap {
+          display: flex; align-items: center; gap: 8px;
+          background: rgba(20,8,45,0.8); border: 1px solid rgba(124,58,237,0.25);
+          border-radius: 11px; padding: 8px 12px;
+        }
+        .ostadi-sort-select {
+          background: transparent; border: none; outline: none;
+          color: white; font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+        }
+        .ostadi-sort-select option { background: #150A2E; }
+
+        .ostadi-active-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
+        .ostadi-chip {
+          display: inline-flex; align-items: center; gap: 6px;
+          background: rgba(255,140,0,0.13); border: 1px solid rgba(255,140,0,0.3);
+          color: #FF8C00; font-size: 12px; font-weight: 600;
+          padding: 5px 10px; border-radius: 999px;
+        }
+        .ostadi-chip button {
+          background: none; border: none; color: #FF8C00; cursor: pointer;
+          display: flex; align-items: center; padding: 0;
+        }
 
         .ostadi-classes-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
         @media (min-width: 640px) { .ostadi-classes-grid { grid-template-columns: 1fr 1fr; } }
@@ -276,32 +547,42 @@ export default function HomePage() {
           background: rgba(124,58,237,0.06); border: 1px solid rgba(124,58,237,0.12);
           border-radius: 16px; padding: 20px;
         }
-        .ostadi-skeleton-line { background: linear-gradient(90deg, rgba(124,58,237,0.1) 25%, rgba(124,58,237,0.25) 50%, rgba(124,58,237,0.1) 75%); background-size: 200% 100%; border-radius: 6px; animation: shimmer 1.6s ease-in-out infinite; }
+        .ostadi-skeleton-line {
+          background: linear-gradient(90deg, rgba(124,58,237,0.1) 25%, rgba(124,58,237,0.25) 50%, rgba(124,58,237,0.1) 75%);
+          background-size: 200% 100%; border-radius: 6px; animation: shimmer 1.6s ease-in-out infinite;
+        }
         @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
         .ostadi-empty-state { text-align: center; padding: 60px 20px; }
         .ostadi-empty-icon {
           width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 16px;
-          background: rgba(124,58,237,0.1); display: flex; align-items: center; justify-content: center;
-          color: #7c3aed;
+          background: rgba(124,58,237,0.1); display: flex; align-items: center; justify-content: center; color: #7c3aed;
         }
         .ostadi-empty-title { color: #d8b4fe; font-weight: 700; font-size: 15.5px; margin-bottom: 6px; }
         .ostadi-empty-hint { color: #8b7bb8; font-size: 13.5px; }
-        .ostadi-demo-label { color: #6d28d9; font-size: 11.5px; text-align: center; margin-top: 10px; }
 
-        .ostadi-cta-section { position: relative; overflow: hidden; margin-top: 20px; border-top: 1px solid rgba(124,58,237,0.15); padding: 72px 16px; text-align: center; }
+        .ostadi-cta-section { position: relative; overflow: hidden; margin-top: 20px; border-top: 1px solid rgba(124,58,237,0.15); padding: 60px 16px; text-align: center; }
         .ostadi-cta-glow { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 500px; height: 300px; background: radial-gradient(ellipse, rgba(255,140,0,0.08), transparent 70%); pointer-events: none; }
         .ostadi-cta-inner { position: relative; max-width: 560px; margin: 0 auto; }
-        .ostadi-cta-title { font-size: 30px; font-weight: 900; color: white; margin: 0 0 12px; letter-spacing: -0.5px; }
-        .ostadi-cta-subtitle { color: #a78bfa; font-size: 15px; margin-bottom: 32px; line-height: 1.6; }
+        .ostadi-cta-title { font-size: 28px; font-weight: 900; color: white; margin: 0 0 12px; }
+        .ostadi-cta-subtitle { color: #a78bfa; font-size: 15px; margin-bottom: 28px; }
         .ostadi-cta-btn {
           display: inline-flex; align-items: center; gap: 8px;
           background: linear-gradient(135deg, #FF8C00, #FF6B00); color: white; font-weight: 800;
           padding: 15px 32px; border-radius: 14px; text-decoration: none; font-size: 15px;
-          box-shadow: 0 10px 30px rgba(255,140,0,0.35); transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1);
+          box-shadow: 0 10px 30px rgba(255,140,0,0.35); transition: all 0.25s ease;
         }
-        .ostadi-cta-btn:hover { transform: translateY(-3px) scale(1.03); box-shadow: 0 16px 40px rgba(255,140,0,0.45); }
+        .ostadi-cta-btn:hover { transform: translateY(-3px) scale(1.03); }
       `}</style>
     </div>
+  );
+}
+
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="ostadi-chip">
+      {label}
+      <button onClick={onRemove}><X size={12} /></button>
+    </span>
   );
 }
