@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { diagnoseConfig } from "@/lib/firebase-admin";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * ⚠️ ROUTE TEMPORAIRE DE DIAGNOSTIC
  *

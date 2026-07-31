@@ -3,15 +3,24 @@ import { AccessToken } from "livekit-server-sdk";
 import { verifyIdToken, adminDb } from "@/lib/firebase-admin";
 
 /**
+ * ⚠️ Ces deux lignes sont indispensables.
+ *
+ * runtime = "nodejs" : firebase-admin ne fonctionne pas sur l'Edge Runtime,
+ * qui est le défaut sur Vercel pour certaines routes. Il lui faut Node.
+ *
+ * dynamic = "force-dynamic" : empêche Next.js de tenter une mise en cache
+ * statique — chaque demande de jeton doit être évaluée à l'exécution.
+ */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/**
  * Génère un jeton LiveKit — accès strictement contrôlé.
  *
  * Vérifications successives :
  *  1. L'utilisateur est authentifié (jeton Firebase valide)
  *  2. Le cours existe
  *  3. L'utilisateur en est le professeur OU y est inscrit
- *
- * Le professeur peut publier et modérer ; l'élève publie aussi
- * (micro/caméra) mais ne peut pas gérer la salle.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -84,7 +93,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    /* ── 6. Nom affiché — récupéré en base, pas du client ── */
+    /* ── 6. Nom affiché — lu en base, pas envoyé par le client ── */
     const userSnap = await db.collection("users").doc(uid).get();
     const displayName = userSnap.exists
       ? (userSnap.data()?.displayName || "Utilisateur")
@@ -94,9 +103,9 @@ export async function POST(req: NextRequest) {
     const roomName = classe.jitsiRoom || `ostadi-${classeId}`;
 
     const at = new AccessToken(apiKey, apiSecret, {
-      identity: uid,                    // l'UID, pas un nom modifiable
+      identity: uid,
       name: displayName,
-      ttl: "3h",                        // expire après 3 heures
+      ttl: "3h",
     });
 
     at.addGrant({
@@ -105,7 +114,6 @@ export async function POST(req: NextRequest) {
       canPublish: true,
       canSubscribe: true,
       canPublishData: true,
-      // Seul le professeur peut modérer la salle
       roomAdmin: isTeacher,
       roomCreate: isTeacher,
     });
@@ -123,16 +131,17 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("Erreur génération jeton LiveKit :", err);
     return NextResponse.json(
-      { error: "internal", message: "Erreur serveur. Réessayez." },
+      {
+        error: "internal",
+        message: "Erreur serveur. Réessayez.",
+        // Détail visible uniquement hors production
+        detail: process.env.NODE_ENV !== "production" ? String(err?.message) : undefined,
+      },
       { status: 500 }
     );
   }
 }
 
-/**
- * L'ancienne méthode GET est volontairement bloquée :
- * elle permettait de générer un jeton sans aucune vérification.
- */
 export async function GET() {
   return NextResponse.json(
     {
