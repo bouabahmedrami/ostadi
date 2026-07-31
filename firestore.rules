@@ -30,7 +30,9 @@ service cloud.firestore {
 
     // ── Users ─────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isAuth();
+      // Les profils PROFESSEURS sont publics : classement, page profil,
+      // carte de cours. Les profils élèves restent réservés aux connectés.
+      allow read: if resource.data.role == 'teacher' || isAuth();
       allow create: if isOwner(userId);
       // ⚠️ L'utilisateur NE PEUT PAS modifier son propre rôle
       allow update: if (isOwner(userId)
@@ -41,7 +43,11 @@ service cloud.firestore {
 
     // ── Classes ───────────────────────────────────────────
     match /classes/{classeId} {
-      allow read: if isAuth();
+      // Lecture publique : un parent doit pouvoir parcourir les cours
+      // AVANT de créer un compte. Ces documents ne contiennent que des
+      // informations destinées à être publiques (titre, prix, horaire,
+      // nom du professeur, numéro WhatsApp qu'il a choisi d'exposer).
+      allow read: if true;
       allow create: if isTeacher()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.price >= 0
@@ -83,7 +89,8 @@ service cloud.firestore {
 
     // ── Ratings ───────────────────────────────────────────
     match /ratings/{ratingId} {
-      allow read: if isAuth();
+      // Les avis sont affichés sur les profils publics des professeurs
+      allow read: if true;
       allow create: if isStudent()
         && request.resource.data.studentId == request.auth.uid
         && request.resource.data.stars >= 1
