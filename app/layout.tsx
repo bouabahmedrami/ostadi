@@ -5,7 +5,7 @@ import { LangProvider } from "@/lib/lang-context";
 import { BandwidthProvider } from "@/lib/hooks/useBandwidth";
 import Navbar from "@/components/Navbar";
 import HtmlLangSync from "@/components/HtmlLangSync";
-
+import AuthDebug from "@/components/AuthDebug";
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://ostadi.vercel.app";
 
 export const metadata: Metadata = {
@@ -98,10 +98,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LangProvider>
           <HtmlLangSync />
           <BandwidthProvider>
+            <AuthDebug />
             <AuthProvider>
               <Navbar />
               <main className="ostadi-main">{children}</main>
             </AuthProvider>
+            <AuthDebug />
           </BandwidthProvider>
         </LangProvider>
       </body>

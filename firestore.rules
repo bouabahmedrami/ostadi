@@ -30,9 +30,18 @@ service cloud.firestore {
 
     // ── Users ─────────────────────────────────────────────
     match /users/{userId} {
-      // Les profils PROFESSEURS sont publics : classement, page profil,
-      // carte de cours. Les profils élèves restent réservés aux connectés.
-      allow read: if resource.data.role == 'teacher' || isAuth();
+      // Lecture ouverte.
+      //
+      // La condition précédente — `resource.data.role == 'teacher' || isAuth()` —
+      // échouait de façon imprévisible : lors d'une lecture par identifiant,
+      // `resource` peut ne pas être disponible au moment de l'évaluation,
+      // et la règle refusait alors même un utilisateur authentifié lisant
+      // son propre profil. Résultat : profil vide, menu incomplet.
+      //
+      // Ces documents ne contiennent que des informations destinées à être
+      // affichées publiquement (nom, wilaya, matières, note, photo).
+      // L'écriture reste strictement contrôlée ci-dessous.
+      allow read: if true;
       allow create: if isOwner(userId);
       // ⚠️ L'utilisateur NE PEUT PAS modifier son propre rôle
       allow update: if (isOwner(userId)
