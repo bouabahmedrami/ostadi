@@ -160,8 +160,19 @@ export default function AdminPage() {
   const maxUsers = Math.max(...(stats?.monthlyGrowth?.map((m: any) => m.teachers + m.students) || [1]), 1);
 
   return (
-    <div className="ad-page">
+    <div className="ad-page" dir={isRTL ? "rtl" : "ltr"}>
       <div className="ad-container">
+
+        {/* ⚠️ MARQUEUR DE VERSION — à retirer une fois le problème réglé.
+            S'il ne s'affiche pas sur Vercel, c'est qu'une ancienne
+            version du fichier est déployée. */}
+        <div style={{
+          background: '#22C55E', color: 'white', padding: '8px 14px',
+          borderRadius: 10, marginBottom: 16, fontSize: 12, fontWeight: 800,
+          textAlign: 'center', letterSpacing: 0.3,
+        }}>
+          ✅ VERSION 2 — onglets + graphiques · {new Date().toISOString().slice(0, 10)}
+        </div>
 
         {/* ═══ HEADER ═══ */}
         <div className="ad-header">
