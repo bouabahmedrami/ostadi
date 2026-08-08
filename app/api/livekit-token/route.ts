@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { AccessToken } from "livekit-server-sdk";
 import { verifyIdToken, adminDb } from "@/lib/firebase-admin";
+import { getCourseAccess } from "@/lib/course-access";
 
-/**
- * ⚠️ Ces deux lignes sont indispensables.
- *
- * runtime = "nodejs" : firebase-admin ne fonctionne pas sur l'Edge Runtime,
- * qui est le défaut sur Vercel pour certaines routes. Il lui faut Node.
- *
- * dynamic = "force-dynamic" : empêche Next.js de tenter une mise en cache
- * statique — chaque demande de jeton doit être évaluée à l'exécution.
- */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -18,9 +10,16 @@ export const dynamic = "force-dynamic";
  * Génère un jeton LiveKit — accès strictement contrôlé.
  *
  * Vérifications successives :
- *  1. L'utilisateur est authentifié (jeton Firebase valide)
+ *  1. L'utilisateur est authentifié
  *  2. Le cours existe
- *  3. L'utilisateur en est le professeur OU y est inscrit
+ *  3. La salle est ouverte (fenêtre horaire)   ← NOUVEAU
+ *  4. L'utilisateur est le professeur OU inscrit
+ *
+ * La vérification 3 est indispensable ici et pas seulement dans
+ * l'interface : sans elle, n'importe qui possédant le lien pouvait
+ * rejoindre la salle d'un cours terminé des semaines plus tôt.
+ * Masquer le bouton côté client ne bloque rien — la requête reste
+ * forgeable depuis la console du navigateur.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -50,7 +49,7 @@ export async function POST(req: NextRequest) {
     const wsUrl = process.env.LIVEKIT_URL;
 
     if (!apiKey || !apiSecret || !wsUrl) {
-      console.error("LiveKit mal configuré — variables d'environnement manquantes");
+      console.error("LiveKit mal configuré — variables manquantes");
       return NextResponse.json(
         { error: "server-misconfigured", message: "Service vidéo indisponible." },
         { status: 500 }
@@ -69,7 +68,29 @@ export async function POST(req: NextRequest) {
     }
     const classe = classeSnap.data()!;
 
-    /* ── 5. L'utilisateur a-t-il le droit d'entrer ? ───── */
+    /* ── 5. La salle est-elle ouverte ? ────────────────── */
+    const access = getCourseAccess({
+      dateTime: classe.dateTime,
+      durationMinutes: classe.durationMinutes,
+      status: classe.status,
+      sessions: classe.sessions,
+    });
+
+    if (!access.open) {
+      return NextResponse.json(
+        {
+          error: access.reason === "ended" ? "course-ended" : "course-not-started",
+          message:
+            access.reason === "ended"
+              ? "Ce cours est terminé. La salle n'est plus accessible."
+              : "La salle ouvre 15 minutes avant le début de la séance.",
+          nextSession: access.nextSession,
+        },
+        { status: 403 }
+      );
+    }
+
+    /* ── 6. L'utilisateur a-t-il le droit d'entrer ? ───── */
     const isTeacher = classe.teacherId === uid;
     let isEnrolled = false;
 
@@ -87,25 +108,38 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: "not-enrolled",
-          message: "Vous n'êtes pas inscrit à ce cours. Envoyez une demande au professeur.",
+          message: "Vous n'êtes pas inscrit à ce cours.",
         },
         { status: 403 }
       );
     }
 
-    /* ── 6. Nom affiché — lu en base, pas envoyé par le client ── */
+    /* ── 7. Nom affiché — lu en base ───────────────────── */
     const userSnap = await db.collection("users").doc(uid).get();
     const displayName = userSnap.exists
       ? (userSnap.data()?.displayName || "Utilisateur")
       : "Utilisateur";
 
-    /* ── 7. Génération du jeton ────────────────────────── */
+    /* ── 8. Génération du jeton ────────────────────────── */
     const roomName = classe.jitsiRoom || `ostadi-${classeId}`;
+
+    /**
+     * Le jeton expire avec la séance, pas 3 heures après.
+     * Un jeton récupéré en début de séance ne doit pas permettre
+     * de revenir dans la salle le lendemain.
+     */
+    const closesAtMs = access.closesAt
+      ? new Date(access.closesAt).getTime()
+      : Date.now() + 3 * 3600_000;
+    const ttlSeconds = Math.max(
+      600, // 10 min minimum
+      Math.floor((closesAtMs - Date.now()) / 1000)
+    );
 
     const at = new AccessToken(apiKey, apiSecret, {
       identity: uid,
       name: displayName,
-      ttl: "3h",
+      ttl: ttlSeconds,
     });
 
     at.addGrant({
@@ -127,16 +161,14 @@ export async function POST(req: NextRequest) {
       identity: uid,
       name: displayName,
       isTeacher,
+      closesAt: access.closesAt,
+      sessionNumber: access.sessionNumber,
+      totalSessions: access.totalSessions,
     });
   } catch (err: any) {
     console.error("Erreur génération jeton LiveKit :", err);
     return NextResponse.json(
-      {
-        error: "internal",
-        message: "Erreur serveur. Réessayez.",
-        // Détail visible uniquement hors production
-        detail: process.env.NODE_ENV !== "production" ? String(err?.message) : undefined,
-      },
+      { error: "internal", message: "Erreur serveur. Réessayez." },
       { status: 500 }
     );
   }

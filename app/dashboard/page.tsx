@@ -12,6 +12,7 @@ import TeacherRevenue from "@/components/TeacherRevenue";
 import TeacherProfileForm from "@/components/TeacherProfileForm";
 import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
 import EditClasseModal from "@/components/EditClasseModal";
+import SessionsPicker from "@/components/SessionsPicker";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   return (
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<string[]>([]);
   const [addPhone, setAddPhone] = useState("");
   const [addName, setAddName] = useState("");
   const [addingStudent, setAddingStudent] = useState(false);
@@ -78,18 +80,42 @@ export default function DashboardPage() {
 
   async function handleCreate() {
     setCreateError(null);
-    if (!form.title || !form.dateTime) return;
+    const isMonthly = form.priceType === "monthly";
+
+    if (!form.title) return;
+
+    // Un cours mensuel se définit par ses séances, pas par une date unique
+    if (isMonthly) {
+      if (sessions.length === 0) {
+        setCreateError(
+          isRTL
+            ? "حدّد موعد حصة واحدة على الأقل."
+            : "Définissez au moins une séance."
+        );
+        return;
+      }
+    } else if (!form.dateTime) {
+      return;
+    }
+
     setCreating(true);
     try {
       const jitsiRoom = generateJitsiRoom(profile!.displayName, form.title);
       await createClasse({
         ...form,
+        // Pour un abonnement, dateTime vaut la première séance :
+        // le tri et l'affichage existants restent valides
+        dateTime: isMonthly ? sessions[0] : form.dateTime,
+        // Firestore rejette `undefined` : on omet le champ au lieu
+        // de l'envoyer vide pour les cours à la séance
+        ...(isMonthly ? { sessions } : {}),
         teacherId: user!.uid,
         teacherName: profile!.displayName,
         // Photo dupliquée ici pour éviter une lecture Firestore
         // supplémentaire à chaque affichage de carte de cours
         teacherPhoto: (profile as any)?.photoURL || "",
-        teacherRating: profile?.rating,
+        // Un prof jamais noté a rating undefined — Firestore le refuse
+        teacherRating: profile?.rating ?? 0,
         jitsiRoom,
         enrolledCount: 0,
         attendanceCount: 0,
@@ -98,6 +124,7 @@ export default function DashboardPage() {
       });
       setShowCreateModal(false);
       setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger" });
+      setSessions([]);
       await loadData();
     } catch (err: any) {
       // Sans catch, un échec fermait le modal comme si tout allait bien
@@ -375,10 +402,12 @@ export default function DashboardPage() {
                   </select>
                 </div>
               </div>
-              <div>
-                <label style={labelStyle}>Date et heure *</label>
-                <input style={inputStyle} type="datetime-local" value={form.dateTime} onChange={e => setForm(f => ({ ...f, dateTime: e.target.value }))} />
-              </div>
+              {form.priceType !== "monthly" && (
+                <div>
+                  <label style={labelStyle}>Date et heure *</label>
+                  <input style={inputStyle} type="datetime-local" value={form.dateTime} onChange={e => setForm(f => ({ ...f, dateTime: e.target.value }))} />
+                </div>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={labelStyle}>Durée (min)</label>
@@ -404,6 +433,20 @@ export default function DashboardPage() {
                   </select>
                 </div>
               </div>
+              {form.priceType === "monthly" && (
+                <div>
+                  <label style={labelStyle}>
+                    {isRTL ? "مواعيد الحصص *" : "Dates des séances *"}
+                  </label>
+                  <p style={{ color: '#6d28d9', fontSize: '11px', margin: '0 0 8px', lineHeight: 1.5 }}>
+                    {isRTL
+                      ? "يسجّل الطالب مرة واحدة ويحضر كل الحصص."
+                      : "L'élève s'inscrit une seule fois et accède à toutes les séances."}
+                  </p>
+                  <SessionsPicker value={sessions} onChange={setSessions} />
+                </div>
+              )}
+
               <div>
                 <label style={labelStyle}>WhatsApp</label>
                 <input style={inputStyle} placeholder="213XXXXXXXXX" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
@@ -430,8 +473,8 @@ export default function DashboardPage() {
               )}
               <button
                 onClick={handleCreate}
-                disabled={creating || !form.title || !form.dateTime}
-                style={{ width: '100%', background: creating || !form.title || !form.dateTime ? 'rgba(255,140,0,0.4)' : '#FF8C00', color: 'white', fontWeight: 800, padding: '14px', borderRadius: '14px', border: 'none', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                disabled={creating || !form.title || (form.priceType === "monthly" ? sessions.length === 0 : !form.dateTime)}
+                style={{ width: '100%', background: creating || !form.title || (form.priceType === "monthly" ? sessions.length === 0 : !form.dateTime) ? 'rgba(255,140,0,0.4)' : '#FF8C00', color: 'white', fontWeight: 800, padding: '14px', borderRadius: '14px', border: 'none', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
                 {creating ? (
                   <><div style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /> Création...</>

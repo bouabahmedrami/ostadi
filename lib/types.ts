@@ -52,6 +52,12 @@ export interface Classe {
   whatsapp?: string;
   createdAt: string;
   archivedAt?: string;    // date d'archivage automatique (1h après fin du cours)
+  /**
+   * Cours mensuels uniquement — dates ISO des séances (8 max).
+   * `dateTime` reste la PREMIÈRE séance, pour garder le tri
+   * et l'affichage existants compatibles.
+   */
+  sessions?: string[];
 }
 
 export interface Enrollment {

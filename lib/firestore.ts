@@ -835,7 +835,21 @@ export async function autoArchiveFinishedClasses(): Promise<number> {
     const c = d.data() as Classe;
     if (c.status === "ended") return; // déjà terminé
 
-    const start = new Date(c.dateTime);
+    /**
+     * ⚠️ Pour un cours MENSUEL, la fin est celle de la DERNIÈRE séance.
+     *
+     * L'ancienne version se basait toujours sur `dateTime`, c'est-à-dire
+     * la première séance. Un abonnement de 8 séances étalées sur un mois
+     * était donc archivé une heure après la première — l'élève payait
+     * le mois complet et perdait l'accès dès la première semaine.
+     */
+    const sessions = (c as any).sessions as string[] | undefined;
+    const lastDate =
+      sessions && sessions.length > 0
+        ? sessions[sessions.length - 1]
+        : c.dateTime;
+
+    const start = new Date(lastDate);
     const endTime = new Date(start.getTime() + (c.durationMinutes || 60) * 60000);
     const oneHourAfterEnd = new Date(endTime.getTime() + 60 * 60000);
 

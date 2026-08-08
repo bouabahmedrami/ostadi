@@ -71,6 +71,10 @@ export default function ClasseCard({
   const accent = SUBJECT_ACCENTS[classe.subject] || "#8B5CF6";
   const accentSoft = lighten(accent, 0.35);
 
+  // Cours mensuel avec plusieurs séances programmées
+  const sessions = (classe as any).sessions as string[] | undefined;
+  const isMultiSession = Array.isArray(sessions) && sessions.length > 1;
+
   return (
     <article
       className={`cc ${isLive ? "cc-live" : ""} ${isEnded ? "cc-ended" : ""}`}
@@ -112,7 +116,9 @@ export default function ClasseCard({
                 border: `1px solid ${rgba(accent, 0.26)}`,
               }}
             >
-              {isRTL ? "قريباً" : "À venir"}
+              {isMultiSession
+                ? (isRTL ? "اشتراك شهري" : "Abonnement")
+                : (isRTL ? "قريباً" : "À venir")}
             </span>
           )}
 
@@ -166,7 +172,9 @@ export default function ClasseCard({
         <div className="cc-meta">
           <span className="cc-meta-item">
             <Calendar size={12} style={{ color: accentSoft }} />
-            {formatDateLocal(classe.dateTime, isRTL)}
+            {isMultiSession
+              ? `${sessions!.length} ${isRTL ? "حصص" : "séances"}`
+              : formatDateLocal(classe.dateTime, isRTL)}
           </span>
           <span className="cc-meta-sep" />
           <span className="cc-meta-item">
@@ -179,6 +187,14 @@ export default function ClasseCard({
             {classe.enrolledCount}
           </span>
         </div>
+
+        {/* ── Première séance, pour les abonnements ── */}
+        {isMultiSession && (
+          <p className="cc-first-session">
+            {isRTL ? "أول حصة : " : "1ʳᵉ séance : "}
+            <b>{formatDateLocal(sessions![0], isRTL)}</b>
+          </p>
+        )}
 
         {/* ── Description ── */}
         {classe.description && <p className="cc-desc">{classe.description}</p>}
@@ -439,6 +455,13 @@ export default function ClasseCard({
           border-radius: 50%;
           background: rgba(124,58,237,0.35);
         }
+
+        .cc-first-session {
+          color: #8b7bb8;
+          font-size: 11.5px;
+          margin: 0;
+        }
+        .cc-first-session b { color: #c4b5fd; font-weight: 600; }
 
         /* ── Description ── */
         .cc-desc {

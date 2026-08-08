@@ -9,12 +9,13 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import { Classe, Enrollment, EnrollmentRequest } from "@/lib/types";
-import { Video, Users, Clock, ArrowLeft, MessageCircle, CheckCircle, Star, MapPin, Calendar, Sparkles, Send, Hourglass, XCircle } from "lucide-react";
+import { Video, Users, Clock, ArrowLeft, MessageCircle, CheckCircle, Star, MapPin, Calendar, Sparkles, Send, Hourglass, XCircle, Lock } from "lucide-react";
 import { StarDisplay } from "@/components/StarRating";
 import LiveKitVideoRoom from "@/components/LiveKitVideoRoom";
 import RatingModal from "@/components/RatingModal";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
+import { getCourseAccess, timeUntil } from "@/lib/course-access";
 
 export default function ClassePage() {
   const { id } = useParams();
@@ -31,8 +32,16 @@ export default function ClassePage() {
   const [mounted, setMounted] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
   const [requestMessage, setRequestMessage] = useState("");
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => { setMounted(true); }, []);
+
+  // Rafraîchit l'état d'ouverture : la salle s'ouvre et se ferme
+  // pendant que l'utilisateur regarde la page
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
   useEffect(() => { if (id) loadClasse(); }, [id, user]);
 
   async function loadClasse() {
@@ -60,6 +69,23 @@ export default function ClassePage() {
   const isEnrolled = !!enrollment;
   const isTeacher = user?.uid === classe?.teacherId;
   const canAccessRoom = isEnrolled || isTeacher;
+
+  // Cours mensuel : plusieurs séances programmées
+  const sessions = (classe as any)?.sessions as string[] | undefined;
+  const isMultiSession = Array.isArray(sessions) && sessions.length > 1;
+
+  // Fenêtre d'accès à la salle — recalculée à chaque tick
+  const access = classe
+    ? getCourseAccess(
+        {
+          dateTime: classe.dateTime,
+          durationMinutes: classe.durationMinutes,
+          status: classe.status,
+          sessions,
+        },
+        now
+      )
+    : null;
 
   async function handleSendRequest() {
     if (!user || !profile || !classe) {
@@ -176,7 +202,16 @@ export default function ClassePage() {
               <span className="ostadi-badge ostadi-badge-purple">{trSubject(classe.subject, isRTL)}</span>
               <span className="ostadi-badge ostadi-badge-blue">{trLevel(classe.level, isRTL)}</span>
               {classe.status === "live" && (
-                <span className="ostadi-badge ostadi-badge-live"><span className="ostadi-live-dot" /> En direct</span>
+                <span className="ostadi-badge ostadi-badge-live"><span className="ostadi-live-dot" /> {isRTL ? "مباشر" : "En direct"}</span>
+              )}
+              {isMultiSession && (
+                <span className="ostadi-badge" style={{
+                  background: 'rgba(255,140,0,0.15)',
+                  color: '#fdba74',
+                  border: '1px solid rgba(255,140,0,0.3)',
+                }}>
+                  📅 {sessions!.length} {isRTL ? "حصص" : "séances"}
+                </span>
               )}
             </div>
             <h1 style={{ color: 'white', fontWeight: 800, fontSize: '24px', margin: '0 0 14px', letterSpacing: '-0.3px', lineHeight: 1.3 }}>
@@ -202,7 +237,7 @@ export default function ClassePage() {
           </div>
 
           {/* ═══ VIDEO ROOM (inscrits + prof) ═══ */}
-          {canAccessRoom ? (
+          {canAccessRoom && access?.open ? (
             <div className="ostadi-card" style={{ padding: '22px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
                 <h2 style={{ color: 'white', fontWeight: 700, fontSize: '15.5px', margin: 0, display: 'flex', alignItems: 'center', gap: '9px' }}>
@@ -241,6 +276,71 @@ export default function ClassePage() {
                 }}>
                   <CheckCircle style={{ width: '16px', height: '16px' }} /> {isRTL ? "تم تأكيد الحضور — شكراً!" : "Présence confirmée — Merci !"}
                 </div>
+              )}
+            </div>
+          ) : canAccessRoom && access && !access.open ? (
+            /* ═══ INSCRIT MAIS SALLE FERMÉE ═══ */
+            <div className="ostadi-card" style={{
+              padding: '34px 24px', textAlign: 'center',
+              background: access.reason === "ended"
+                ? 'rgba(124,58,237,0.04)'
+                : 'linear-gradient(135deg, rgba(59,130,246,0.06), rgba(124,58,237,0.04))',
+              border: access.reason === "ended"
+                ? '1px solid rgba(124,58,237,0.2)'
+                : '1px solid rgba(59,130,246,0.25)',
+            }}>
+              <div style={{
+                width: '56px', height: '56px', borderRadius: '16px', margin: '0 auto 16px',
+                background: access.reason === "ended"
+                  ? 'rgba(124,58,237,0.12)'
+                  : 'rgba(59,130,246,0.14)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {access.reason === "ended"
+                  ? <Lock style={{ width: '26px', height: '26px', color: '#8b7bb8' }} />
+                  : <Clock style={{ width: '26px', height: '26px', color: '#60a5fa' }} />}
+              </div>
+
+              <p style={{
+                color: access.reason === "ended" ? '#a78bfa' : '#93c5fd',
+                fontWeight: 700, fontSize: '16px', marginBottom: '8px',
+              }}>
+                {access.reason === "ended"
+                  ? (isRTL ? "انتهى هذا الدرس" : "Ce cours est terminé")
+                  : (isRTL ? "القاعة لم تفتح بعد" : "La salle n'est pas encore ouverte")}
+              </p>
+
+              <p style={{
+                color: '#8b7bb8', fontSize: '13.5px', maxWidth: '400px',
+                margin: '0 auto', lineHeight: 1.6,
+              }}>
+                {access.reason === "ended"
+                  ? (isRTL
+                      ? "لم تعد قاعة الفيديو متاحة. يمكنك مراجعة التسجيلات إن رفعها الأستاذ."
+                      : "La salle vidéo n'est plus accessible. Consultez les enregistrements si le professeur en a publié.")
+                  : access.nextSession
+                    ? (isRTL
+                        ? `تفتح القاعة قبل 15 دقيقة من البداية — خلال ${timeUntil(access.nextSession, isRTL, now)}.`
+                        : `Elle ouvre 15 minutes avant le début — dans ${timeUntil(access.nextSession, isRTL, now)}.`)
+                    : (isRTL ? "لا توجد حصة قادمة." : "Aucune séance à venir.")}
+              </p>
+
+              {access.reason === "too-early" && access.nextSession && (
+                <p style={{ color: '#60a5fa', fontSize: '12.5px', marginTop: '14px', fontWeight: 600 }}>
+                  {isMultiSession && access.sessionNumber
+                    ? `${isRTL ? "الحصة" : "Séance"} ${access.sessionNumber}/${access.totalSessions} — `
+                    : ""}
+                  {formatDate(access.nextSession)}
+                </p>
+              )}
+
+              {access.reason === "ended" && (
+                <Link href="/enregistrements" className="ostadi-btn-outline" style={{
+                  display: 'inline-flex', marginTop: '20px', padding: '11px 22px',
+                }}>
+                  <Video style={{ width: '15px', height: '15px' }} />
+                  {isRTL ? "التسجيلات" : "Voir les enregistrements"}
+                </Link>
               )}
             </div>
           ) : (
@@ -381,6 +481,58 @@ export default function ClassePage() {
             </div>
           )}
 
+          {/* ═══ CALENDRIER DES SÉANCES ═══ */}
+          {isMultiSession && (
+            <div className="ostadi-card" style={{ padding: '20px' }}>
+              <h2 style={{
+                color: 'white', fontWeight: 700, fontSize: '15px', margin: '0 0 4px',
+                display: 'flex', alignItems: 'center', gap: '9px',
+              }}>
+                <Calendar style={{ width: '16px', height: '16px', color: '#FF8C00' }} />
+                {isRTL ? "برنامج الحصص" : "Calendrier des séances"}
+              </h2>
+              <p style={{ color: '#6d28d9', fontSize: '11.5px', margin: '0 0 16px' }}>
+                {isRTL
+                  ? "تسجيل واحد يمنحك الوصول إلى كل الحصص."
+                  : "Une seule inscription donne accès à toutes les séances."}
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {sessions!.map((s, i) => {
+                  const past = new Date(s).getTime() < Date.now();
+                  return (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: '11px',
+                      padding: '9px 10px', borderRadius: '10px',
+                      background: past ? 'transparent' : 'rgba(124,58,237,0.06)',
+                      opacity: past ? 0.45 : 1,
+                    }}>
+                      <span style={{
+                        width: '22px', height: '22px', borderRadius: '7px', flexShrink: 0,
+                        background: past ? 'rgba(124,58,237,0.15)' : 'rgba(255,140,0,0.18)',
+                        color: past ? '#8b7bb8' : '#FF8C00',
+                        fontSize: '10.5px', fontWeight: 800,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {i + 1}
+                      </span>
+                      <span style={{
+                        flex: 1, color: past ? '#8b7bb8' : '#c4b5fd', fontSize: '12.5px',
+                      }}>
+                        {formatDate(s)}
+                      </span>
+                      {past && (
+                        <span style={{ color: '#6d28d9', fontSize: '10.5px', flexShrink: 0 }}>
+                          {isRTL ? "منتهية" : "passée"}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* ═══ INFO ROW ═══ */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <div className="ostadi-card ostadi-card-hover" style={{ padding: '18px' }}>
@@ -406,7 +558,11 @@ export default function ClassePage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <Calendar style={{ width: '13px', height: '13px', color: '#FF8C00', flexShrink: 0 }} />
-                  <span style={{ color: 'white', fontSize: '12.5px' }}>{formatDate(classe.dateTime)}</span>
+                  <span style={{ color: 'white', fontSize: '12.5px' }}>
+                    {isMultiSession
+                      ? `${sessions!.length} ${isRTL ? "حصص" : "séances"}`
+                      : formatDate(classe.dateTime)}
+                  </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ color: '#FF8C00', fontWeight: 800, fontSize: '17px' }}>{classe.price.toLocaleString()}</span>
