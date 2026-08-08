@@ -175,9 +175,18 @@ export default function AdminPage() {
         </div>
 
         {/* ═══ HEADER ═══ */}
-        <div className="ad-header">
-          <div className="ad-header-left">
-            <div className="ad-logo"><BarChart3 size={20} /></div>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: '14px', marginBottom: '24px', flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '13px' }}>
+            <div style={{
+              width: '46px', height: '46px', borderRadius: '14px',
+              background: 'linear-gradient(135deg, rgba(255,140,0,0.2), rgba(124,58,237,0.18))',
+              border: '1px solid rgba(255,140,0,0.3)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#FF8C00', flexShrink: 0,
+            }}><BarChart3 size={20} /></div>
             <div>
               <h1 className="ad-title">{isRTL ? "لوحة الإدارة" : "Panneau Administrateur"}</h1>
               <p className="ad-sub">
@@ -221,15 +230,29 @@ export default function AdminPage() {
         </div>
 
         {/* ═══ TABS ═══ */}
-        <div className="ad-tabs">
+        <div style={{
+          display: 'flex', gap: '7px', marginBottom: '20px', flexWrap: 'wrap',
+        }}>
           {[
             { id: "overview", label: isRTL ? "نظرة عامة" : "Vue d'ensemble", icon: <Activity size={14} /> },
             { id: "revenue", label: isRTL ? "الإيرادات" : "Revenus", icon: <Banknote size={14} /> },
             { id: "users", label: `${isRTL ? "المستخدمون" : "Utilisateurs"} (${users.length})`, icon: <Users size={14} /> },
             { id: "moderation", label: `${isRTL ? "الإشراف" : "Modération"}${alertCount > 0 ? ` (${alertCount})` : ''}`, icon: <ShieldCheck size={14} /> },
           ].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id as any)}
-              className={`ad-tab ${tab === t.id ? 'ad-tab-on' : ''}`}>
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id as any)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '7px',
+                background: tab === t.id ? '#FF8C00' : 'rgba(124,58,237,0.08)',
+                border: `1px solid ${tab === t.id ? '#FF8C00' : 'rgba(124,58,237,0.2)'}`,
+                color: tab === t.id ? 'white' : '#a78bfa',
+                fontSize: '12.5px', fontWeight: 700,
+                padding: '10px 16px', borderRadius: '11px',
+                cursor: 'pointer', fontFamily: 'inherit',
+                transition: 'all 0.2s ease',
+              }}
+            >
               {t.icon} {t.label}
             </button>
           ))}
@@ -248,8 +271,15 @@ export default function AdminPage() {
             </div>
 
             {/* Croissance */}
-            <div className="ad-card">
-              <h3 className="ad-card-title"><TrendingUp size={16} /> {isRTL ? "النمو — آخر 6 أشهر" : "Croissance — 6 derniers mois"}</h3>
+            <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+              <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><TrendingUp size={16} /> {isRTL ? "النمو — آخر 6 أشهر" : "Croissance — 6 derniers mois"}</h3>
               <div className="ad-chart">
                 {stats.monthlyGrowth.map((m: any, i: number) => {
                   const total = m.teachers + m.students;
@@ -273,10 +303,19 @@ export default function AdminPage() {
               </div>
             </div>
 
-            <div className="ad-two-col">
+            <div style={{
+          display: 'grid', gridTemplateColumns: '1fr', gap: '16px',
+        }}>
               {/* Wilayas */}
-              <div className="ad-card">
-                <h3 className="ad-card-title"><MapPin size={16} /> {isRTL ? "أهم الولايات" : "Top wilayas"}</h3>
+              <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+                <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><MapPin size={16} /> {isRTL ? "أهم الولايات" : "Top wilayas"}</h3>
                 {stats.byWilaya.length === 0 ? <p className="ad-empty-txt">{isRTL ? "لا توجد بيانات" : "Aucune donnée"}</p> :
                   stats.byWilaya.map((w: any, i: number) => {
                     const max = stats.byWilaya[0].count || 1;
@@ -293,8 +332,15 @@ export default function AdminPage() {
               </div>
 
               {/* Matières */}
-              <div className="ad-card">
-                <h3 className="ad-card-title"><BookOpen size={16} /> {isRTL ? "المواد الأكثر طلباً" : "Matières populaires"}</h3>
+              <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+                <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><BookOpen size={16} /> {isRTL ? "المواد الأكثر طلباً" : "Matières populaires"}</h3>
                 {stats.bySubject.length === 0 ? <p className="ad-empty-txt">{isRTL ? "لا توجد بيانات" : "Aucune donnée"}</p> :
                   stats.bySubject.slice(0, 8).map((s: any, i: number) => {
                     const max = stats.bySubject[0].count || 1;
@@ -343,8 +389,15 @@ export default function AdminPage() {
             </div>
 
             {/* Revenus mensuels */}
-            <div className="ad-card">
-              <h3 className="ad-card-title"><Banknote size={16} /> {isRTL ? "العمولات الشهرية" : "Commissions mensuelles"}</h3>
+            <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+              <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><Banknote size={16} /> {isRTL ? "العمولات الشهرية" : "Commissions mensuelles"}</h3>
               <div className="ad-chart">
                 {stats.monthlyGrowth.map((m: any, i: number) => (
                   <div key={i} className="ad-bar-col">
@@ -359,8 +412,15 @@ export default function AdminPage() {
             </div>
 
             {/* Top profs par revenu */}
-            <div className="ad-card">
-              <h3 className="ad-card-title"><Crown size={16} /> {isRTL ? "الأساتذة الأكثر ربحية" : "Professeurs les plus rentables"}</h3>
+            <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+              <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><Crown size={16} /> {isRTL ? "الأساتذة الأكثر ربحية" : "Professeurs les plus rentables"}</h3>
               {stats.topTeachers.length === 0 ? <p className="ad-empty-txt">{isRTL ? "لا توجد بيانات" : "Aucune donnée"}</p> : (
                 <div className="ad-table">
                   <div className="ad-th">
@@ -384,8 +444,15 @@ export default function AdminPage() {
 
         {/* ═══════════ UTILISATEURS ═══════════ */}
         {tab === "users" && (
-          <div className="ad-card">
-            <h3 className="ad-card-title"><Users size={16} /> {isRTL ? "كل المستخدمين" : "Tous les utilisateurs"} ({users.length})</h3>
+          <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+            <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}><Users size={16} /> {isRTL ? "كل المستخدمين" : "Tous les utilisateurs"} ({users.length})</h3>
             <div className="ad-table">
               <div className="ad-th ad-th-users">
                 <span>{isRTL ? "الاسم" : "Nom"}</span><span>{isRTL ? "الدور" : "Rôle"}</span><span>{isRTL ? "الولاية" : "Wilaya"}</span><span>{isRTL ? "الهاتف" : "Téléphone"}</span><span>{isRTL ? "الحالة" : "Statut"}</span>
@@ -414,8 +481,15 @@ export default function AdminPage() {
         {tab === "moderation" && (
           <>
             {/* Vérifications */}
-            <div className="ad-card">
-              <h3 className="ad-card-title">
+            <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+              <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}>
                 <ShieldCheck size={16} /> {isRTL ? "طلبات التوثيق" : "Vérifications en attente"} ({pendingVerifs.length})
               </h3>
               {pendingVerifs.length === 0 ? (
@@ -470,8 +544,15 @@ export default function AdminPage() {
             </div>
 
             {/* Abonnements */}
-            <div className="ad-card">
-              <h3 className="ad-card-title">
+            <div style={{
+            background: 'linear-gradient(145deg, rgba(20,8,45,0.92), rgba(15,5,30,0.92))',
+            border: '1px solid rgba(124,58,237,0.22)',
+            borderRadius: '16px', padding: '20px', marginBottom: '16px',
+          }}>
+              <h3 style={{
+            display: 'flex', alignItems: 'center', gap: '9px',
+            color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 18px',
+          }}>
                 <Crown size={16} /> {isRTL ? "اشتراكات للتفعيل" : "Abonnements à valider"} ({subscriptions.length})
               </h3>
               {subscriptions.length === 0 ? (
