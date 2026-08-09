@@ -18,6 +18,9 @@ import { UserProfile, UserRole } from "@/lib/types";
 // Version courante des CGU — à incrémenter si tu modifies les conditions
 export const CGU_VERSION = "1.0";
 
+/** Compte administrateur — doit correspondre aux règles Firestore */
+const ADMIN_UID = "4bnssIV8FlS80SzaX6ylwc9Fbg92";
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
@@ -47,10 +50,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [emailVerified, setEmailVerified] = useState(false);
 
+  /**
+   * Récupère le profil Firestore de l'utilisateur.
+   *
+   * Si le document n'existe pas, il est créé automatiquement.
+   * Ce cas se produit quand un compte a été créé directement depuis
+   * la console Firebase Authentication : l'utilisateur peut se connecter,
+   * mais l'application n'a aucune information sur lui — pas de nom,
+   * pas de rôle, donc un menu vide et aucun accès au dashboard.
+   */
   const fetchProfile = async (uid: string) => {
-    const snap = await getDoc(doc(db, "users", uid));
-    if (snap.exists()) {
-      setProfile(snap.data() as UserProfile);
+    try {
+      const snap = await getDoc(doc(db, "users", uid));
+
+      if (snap.exists()) {
+        setProfile(snap.data() as UserProfile);
+        return;
+      }
+
+      const u = auth.currentUser;
+      if (!u) return;
+
+      const now = new Date().toISOString();
+      const isAdmin = uid === ADMIN_UID;
+
+      const created: UserProfile = {
+        uid,
+        // L'admin est aussi professeur, pour pouvoir tester la plateforme.
+        // Les autres comptes orphelins démarrent en élève : c'est le rôle
+        // le moins permissif, et il se change depuis le profil.
+        role: isAdmin ? "teacher" : "student",
+        displayName:
+          u.displayName || u.email?.split("@")[0] || "Utilisateur",
+        phone: u.phoneNumber || "",
+        wilaya: "Alger",
+        createdAt: now,
+        rating: 0,
+        ratingCount: 0,
+        featured: false,
+        subscriptionActive: isAdmin,
+        diplomaVerified: isAdmin,
+        cguAccepted: true,
+        cguAcceptedAt: now,
+        cguVersion: CGU_VERSION,
+      };
+
+      await setDoc(doc(db, "users", uid), created);
+      setProfile(created);
+      console.info("Profil Firestore créé automatiquement pour", uid);
+    } catch (err) {
+      // Non bloquant : l'utilisateur reste connecté, l'app fonctionne
+      // en mode dégradé plutôt que de planter
+      console.error("Chargement du profil échoué :", err);
     }
   };
 

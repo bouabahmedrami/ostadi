@@ -223,14 +223,33 @@ export default function Navbar() {
               {link.badge ? <span className="ostadi-badge-count" style={{ marginLeft: 'auto' }}>{link.badge}</span> : null}
             </Link>
           ))}
+
+          {/* Le lien Admin n'existait que dans la navigation bureau :
+              sur téléphone, il n'y avait aucun accès au panneau. */}
+          {user?.uid === "4bnssIV8FlS80SzaX6ylwc9Fbg92" && (
+            <Link
+              href="/admin"
+              className="ostadi-mobile-link"
+              onClick={() => setOpen(false)}
+              style={{ color: '#FF8C00', fontWeight: 700 }}
+            >
+              <span>⚙️</span> Admin
+            </Link>
+          )}
         </div>
 
         <div className="ostadi-mobile-bottom">
           {user ? (
             <>
               <Link href="/profile" className="ostadi-mobile-user" style={{ textDecoration: 'none' }} onClick={() => setOpen(false)}>
-                <div className="ostadi-mobile-avatar">{profile?.displayName?.charAt(0).toUpperCase()}</div>
-                <span>{profile?.displayName}</span>
+                <div className="ostadi-mobile-avatar">
+                  {profile?.displayName?.charAt(0).toUpperCase()
+                    || user?.email?.charAt(0).toUpperCase()
+                    || "?"}
+                </div>
+                <span>
+                  {profile?.displayName || user?.email || (isRTL ? "حسابي" : "Mon compte")}
+                </span>
               </Link>
               <button onClick={() => { logout(); setOpen(false); }} className="ostadi-mobile-logout">
                 <LogOut size={16} /> {t.nav.logout}
