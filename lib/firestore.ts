@@ -1487,3 +1487,108 @@ export async function getTeacherBilan(
     attendedCount: lines.filter(l => l.attended).length,
   };
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// RAPPELS DE PAIEMENT
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Envoie un rappel de paiement à un professeur.
+ *
+ * Volontairement déclenché par l'admin plutôt qu'automatiquement :
+ * un rappel envoyé par erreur à un professeur qui vient de payer
+ * abîme la relation. Tu gardes la main sur qui reçoit quoi.
+ */
+export async function sendPaymentReminder(data: {
+  teacherId: string;
+  teacherName: string;
+  balance: number;
+  daysSince: number | null;
+  isOverdue: boolean;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  const title = data.isOverdue
+    ? "⚠️ Commission en retard"
+    : "💰 Rappel de commission";
+
+  const body = data.isOverdue
+    ? `Votre commission de ${data.balance.toLocaleString()} DA est en attente depuis ${data.daysSince} jours. Merci de régulariser rapidement.`
+    : `Vous avez ${data.balance.toLocaleString()} DA de commission à régler. Consultez votre bilan dans l'onglet Revenus.`;
+
+  await addDoc(collection(db, "notifications"), {
+    userId: data.teacherId,
+    type: "subscription",
+    title,
+    body,
+    link: "/dashboard",
+    read: false,
+    createdAt: now,
+  });
+
+  // Trace du rappel : évite d'en envoyer plusieurs le même jour
+  await addDoc(collection(db, "paymentReminders"), {
+    teacherId: data.teacherId,
+    teacherName: data.teacherName,
+    balance: data.balance,
+    daysSince: data.daysSince,
+    isOverdue: data.isOverdue,
+    sentAt: now,
+  });
+}
+
+/**
+ * Envoie un rappel à tous les professeurs concernés.
+ * Ignore ceux déjà relancés dans les 7 derniers jours.
+ */
+export async function sendBulkReminders(
+  teachers: { teacherId: string; teacherName: string; balance: number; daysSincePayment: number | null; status: string }[]
+): Promise<{ sent: number; skipped: number }> {
+  // Rappels récents, pour ne pas harceler
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const recentSnap = await getDocs(collection(db, "paymentReminders"));
+  const recentIds = new Set(
+    recentSnap.docs
+      .map(d => d.data())
+      .filter((r: any) => r.sentAt > weekAgo)
+      .map((r: any) => r.teacherId)
+  );
+
+  let sent = 0;
+  let skipped = 0;
+
+  for (const t of teachers) {
+    if (t.balance <= 0) { skipped++; continue; }
+    if (recentIds.has(t.teacherId)) { skipped++; continue; }
+
+    try {
+      await sendPaymentReminder({
+        teacherId: t.teacherId,
+        teacherName: t.teacherName,
+        balance: t.balance,
+        daysSince: t.daysSincePayment,
+        isOverdue: t.status === "overdue",
+      });
+      sent++;
+    } catch (err) {
+      console.error(`Rappel échoué pour ${t.teacherName} :`, err);
+      skipped++;
+    }
+  }
+
+  return { sent, skipped };
+}
+
+/** Date du dernier rappel envoyé à un professeur */
+export async function getLastReminder(teacherId: string): Promise<string | null> {
+  const snap = await getDocs(
+    query(
+      collection(db, "paymentReminders"),
+      where("teacherId", "==", teacherId),
+      orderBy("sentAt", "desc"),
+      limit(1)
+    )
+  );
+  return snap.empty ? null : (snap.docs[0].data() as any).sentAt;
+}

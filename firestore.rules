@@ -185,6 +185,13 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
+    // ── Historique des rappels de paiement ────────────────
+    // Trace des relances envoyées, pour éviter de solliciter
+    // deux fois le même professeur dans la semaine.
+    match /paymentReminders/{reminderId} {
+      allow read, write: if isAdmin();
+    }
+
     // ── Collection admin privée (config, logs) ────────────
     match /adminData/{document=**} {
       allow read, write: if isAdmin();

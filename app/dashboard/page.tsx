@@ -10,6 +10,7 @@ import Link from "next/link";
 import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
 import TeacherRevenue from "@/components/TeacherRevenue";
 import BilanDownload from "@/components/BilanDownload";
+import CommissionAlert from "@/components/CommissionAlert";
 import TeacherProfileForm from "@/components/TeacherProfileForm";
 import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
 import EditClasseModal from "@/components/EditClasseModal";
@@ -260,6 +261,11 @@ export default function DashboardPage() {
             )}
           </div>
         )}
+
+        {/* ═══ SOLDE DE COMMISSION ═══
+            Placé avant les onglets : le professeur le voit à chaque
+            connexion, sans avoir à chercher dans l'onglet Revenus. */}
+        {user && <CommissionAlert teacherId={user.uid} />}
 
         {/* ═══ TABS ═══ */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', borderBottom: '1px solid rgba(88,28,135,0.3)', paddingBottom: '2px' }}>
