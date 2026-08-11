@@ -172,6 +172,19 @@ service cloud.firestore {
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }
 
+    // ── Règlements de commission ──────────────────────────
+    // Historique des sommes versées par les professeurs à Ostadi.
+    // Sans cette collection, impossible de savoir qui a payé quoi
+    // ni de calculer les retards.
+    match /commissionPayments/{paymentId} {
+      // Le professeur consulte ses propres règlements (pour son bilan),
+      // l'admin voit tout
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+      // Seul l'admin enregistre un paiement : c'est lui qui l'a reçu
+      allow create, update, delete: if isAdmin();
+    }
+
     // ── Collection admin privée (config, logs) ────────────
     match /adminData/{document=**} {
       allow read, write: if isAdmin();

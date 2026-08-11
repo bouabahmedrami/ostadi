@@ -1188,3 +1188,302 @@ export async function updateTeacherProfile(
     }
   }
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// SUIVI DES COMMISSIONS PROFESSEURS
+// ═══════════════════════════════════════════════════════════
+
+/** Taux de commission de la plateforme */
+export const PLATFORM_COMMISSION_RATE = 0.10;
+
+/** Seuils d'alerte, en jours depuis le dernier règlement */
+export const OVERDUE_DAYS = 33;   // rouge
+export const WARNING_DAYS = 25;   // orange
+
+export type PaymentStatus = "ok" | "warning" | "overdue" | "none";
+
+export interface TeacherCommission {
+  teacherId: string;
+  teacherName: string;
+  phone: string;
+  wilaya: string;
+  /** Chiffre d'affaires généré sur la plateforme */
+  totalRevenue: number;
+  /** Commission totale due depuis le début */
+  totalCommission: number;
+  /** Somme déjà réglée */
+  totalPaid: number;
+  /** Reste à payer */
+  balance: number;
+  /** CA du mois en cours */
+  monthRevenue: number;
+  /** Commission du mois en cours */
+  monthCommission: number;
+  /** Date du dernier règlement (ISO), null si jamais payé */
+  lastPaymentAt: string | null;
+  lastPaymentAmount: number;
+  /** Jours écoulés depuis le dernier règlement */
+  daysSincePayment: number | null;
+  status: PaymentStatus;
+  studentsCount: number;
+  classesCount: number;
+}
+
+/**
+ * Calcule la situation de commission de chaque professeur.
+ *
+ * Le solde est la différence entre ce qui est dû (10 % du CA généré)
+ * et ce qui a été réglé. Le statut dépend du temps écoulé depuis le
+ * dernier versement — pas du montant : un professeur qui doit peu mais
+ * n'a rien payé depuis 40 jours reste en retard.
+ */
+export async function getTeachersCommissionStatus(): Promise<TeacherCommission[]> {
+  const [usersSnap, classesSnap, enrollSnap, paymentsSnap] = await Promise.all([
+    getDocs(query(collection(db, "users"), where("role", "==", "teacher"))),
+    getDocs(collection(db, "classes")),
+    getDocs(collection(db, "enrollments")),
+    getDocs(collection(db, "commissionPayments")),
+  ]);
+
+  const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const enrollments = enrollSnap.docs.map(d => d.data() as any);
+  const payments = paymentsSnap.docs.map(d => d.data() as any);
+
+  // Cours → prix et professeur
+  const classMap = new Map<string, { price: number; teacherId: string }>();
+  classes.forEach(c =>
+    classMap.set(c.id, { price: c.price || 0, teacherId: c.teacherId })
+  );
+
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const thisYear = now.getFullYear();
+
+  // CA par professeur
+  const revenueByTeacher = new Map<string, number>();
+  const monthRevenueByTeacher = new Map<string, number>();
+  const studentsByTeacher = new Map<string, Set<string>>();
+
+  enrollments.forEach(e => {
+    const info = classMap.get(e.classeId);
+    if (!info) return;
+
+    revenueByTeacher.set(
+      info.teacherId,
+      (revenueByTeacher.get(info.teacherId) || 0) + info.price
+    );
+
+    const d = new Date(e.enrolledAt);
+    if (d.getMonth() === thisMonth && d.getFullYear() === thisYear) {
+      monthRevenueByTeacher.set(
+        info.teacherId,
+        (monthRevenueByTeacher.get(info.teacherId) || 0) + info.price
+      );
+    }
+
+    if (!studentsByTeacher.has(info.teacherId)) {
+      studentsByTeacher.set(info.teacherId, new Set());
+    }
+    studentsByTeacher.get(info.teacherId)!.add(e.studentId);
+  });
+
+  // Règlements par professeur
+  const paidByTeacher = new Map<string, number>();
+  const lastPaymentByTeacher = new Map<string, { at: string; amount: number }>();
+
+  payments.forEach(p => {
+    paidByTeacher.set(p.teacherId, (paidByTeacher.get(p.teacherId) || 0) + (p.amount || 0));
+
+    const prev = lastPaymentByTeacher.get(p.teacherId);
+    if (!prev || new Date(p.paidAt) > new Date(prev.at)) {
+      lastPaymentByTeacher.set(p.teacherId, { at: p.paidAt, amount: p.amount || 0 });
+    }
+  });
+
+  const classCountByTeacher = new Map<string, number>();
+  classes.forEach(c =>
+    classCountByTeacher.set(c.teacherId, (classCountByTeacher.get(c.teacherId) || 0) + 1)
+  );
+
+  return usersSnap.docs.map(doc => {
+    const u = doc.data() as any;
+    const id = doc.id;
+
+    const totalRevenue = revenueByTeacher.get(id) || 0;
+    const totalCommission = Math.round(totalRevenue * PLATFORM_COMMISSION_RATE);
+    const totalPaid = paidByTeacher.get(id) || 0;
+    const balance = totalCommission - totalPaid;
+
+    const monthRevenue = monthRevenueByTeacher.get(id) || 0;
+    const last = lastPaymentByTeacher.get(id) || null;
+
+    let daysSince: number | null = null;
+    if (last) {
+      daysSince = Math.floor(
+        (now.getTime() - new Date(last.at).getTime()) / 86_400_000
+      );
+    } else if (totalCommission > 0) {
+      // Jamais payé : on compte depuis la création du compte
+      daysSince = Math.floor(
+        (now.getTime() - new Date(u.createdAt || now).getTime()) / 86_400_000
+      );
+    }
+
+    let status: PaymentStatus = "none";
+    if (balance <= 0) {
+      status = "ok";
+    } else if (daysSince === null) {
+      status = "none";
+    } else if (daysSince >= OVERDUE_DAYS) {
+      status = "overdue";
+    } else if (daysSince >= WARNING_DAYS) {
+      status = "warning";
+    } else {
+      status = "ok";
+    }
+
+    return {
+      teacherId: id,
+      teacherName: u.displayName || "—",
+      phone: u.phone || "—",
+      wilaya: u.wilaya || "—",
+      totalRevenue,
+      totalCommission,
+      totalPaid,
+      balance,
+      monthRevenue,
+      monthCommission: Math.round(monthRevenue * PLATFORM_COMMISSION_RATE),
+      lastPaymentAt: last?.at || null,
+      lastPaymentAmount: last?.amount || 0,
+      daysSincePayment: daysSince,
+      status,
+      studentsCount: studentsByTeacher.get(id)?.size || 0,
+      classesCount: classCountByTeacher.get(id) || 0,
+    };
+  }).sort((a, b) => {
+    // Les retards d'abord, puis par solde décroissant
+    const order: Record<PaymentStatus, number> = { overdue: 0, warning: 1, none: 2, ok: 3 };
+    if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+    return b.balance - a.balance;
+  });
+}
+
+/** Enregistre un règlement de commission */
+export async function recordCommissionPayment(data: {
+  teacherId: string;
+  teacherName: string;
+  amount: number;
+  method: string;
+  reference?: string;
+  note?: string;
+  recordedBy: string;
+}): Promise<string> {
+  const now = new Date();
+  const ref = await addDoc(collection(db, "commissionPayments"), {
+    ...data,
+    reference: data.reference || "",
+    note: data.note || "",
+    period: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+    paidAt: now.toISOString(),
+    createdAt: now.toISOString(),
+  });
+
+  // Notifie le professeur pour qu'il ait une trace de son côté
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: data.teacherId,
+      type: "subscription",
+      title: "💰 Paiement enregistré",
+      body: `Votre règlement de ${data.amount.toLocaleString()} DA a bien été enregistré.`,
+      link: "/revenus",
+      read: false,
+      createdAt: now.toISOString(),
+    });
+  } catch {
+    // Non bloquant
+  }
+
+  return ref.id;
+}
+
+/** Historique des règlements d'un professeur */
+export async function getTeacherPayments(teacherId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "commissionPayments"),
+      where("teacherId", "==", teacherId),
+      orderBy("paidAt", "desc")
+    )
+  );
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+}
+
+/**
+ * Bilan détaillé d'un professeur sur une période.
+ * `period` : "month" pour le mois en cours, "year" pour l'année, "all" pour tout.
+ */
+export async function getTeacherBilan(
+  teacherId: string,
+  period: "month" | "year" | "all" = "month"
+) {
+  const [classesSnap, enrollSnap, paymentsSnap] = await Promise.all([
+    getDocs(query(collection(db, "classes"), where("teacherId", "==", teacherId))),
+    getDocs(collection(db, "enrollments")),
+    getDocs(query(collection(db, "commissionPayments"), where("teacherId", "==", teacherId))),
+  ]);
+
+  const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const classIds = new Set(classes.map(c => c.id));
+  const classMap = new Map(classes.map(c => [c.id, c]));
+
+  const now = new Date();
+  const inPeriod = (iso: string) => {
+    if (period === "all") return true;
+    const d = new Date(iso);
+    if (period === "year") return d.getFullYear() === now.getFullYear();
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  };
+
+  const enrollments = enrollSnap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .filter(e => classIds.has(e.classeId) && inPeriod(e.enrolledAt));
+
+  const lines = enrollments.map(e => {
+    const c = classMap.get(e.classeId);
+    return {
+      date: e.enrolledAt,
+      classeTitle: c?.title || "—",
+      subject: c?.subject || "—",
+      level: c?.level || "—",
+      studentName: e.studentName || "—",
+      studentPhone: e.studentPhone || "—",
+      price: c?.price || 0,
+      attended: !!e.attended,
+    };
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+  const grossRevenue = lines.reduce((s, l) => s + l.price, 0);
+  const commission = Math.round(grossRevenue * PLATFORM_COMMISSION_RATE);
+
+  const payments = paymentsSnap.docs
+    .map(d => d.data() as any)
+    .filter(p => inPeriod(p.paidAt))
+    .sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime());
+
+  const paid = payments.reduce((s, p) => s + (p.amount || 0), 0);
+
+  return {
+    period,
+    lines,
+    payments,
+    grossRevenue,
+    commission,
+    netRevenue: grossRevenue - commission,
+    paid,
+    balance: commission - paid,
+    studentsCount: new Set(enrollments.map(e => e.studentId)).size,
+    classesCount: classes.length,
+    attendedCount: lines.filter(l => l.attended).length,
+  };
+}

@@ -10,6 +10,7 @@ import {
   approveVerification, rejectVerification,
   activateSubscription, rejectSubscription,
 } from "@/lib/firestore";
+import TeacherPaymentsPanel from "@/components/TeacherPaymentsPanel";
 import {
   Users, BookOpen, Banknote, TrendingUp, ShieldCheck, Crown, Star,
   AlertTriangle, Eye, Check, X, MapPin, BarChart3, Wallet, UserCheck,
@@ -107,7 +108,7 @@ export default function AdminPage() {
   const [verifications, setVerifications] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [tab, setTab] = useState<"overview" | "revenue" | "users" | "moderation">("overview");
+  const [tab, setTab] = useState<"overview" | "revenue" | "payments" | "users" | "moderation">("overview");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -230,6 +231,7 @@ export default function AdminPage() {
   const TABS = [
     { id: "overview", label: isRTL ? "نظرة عامة" : "Vue d'ensemble", icon: <Activity size={14} /> },
     { id: "revenue", label: isRTL ? "الإيرادات" : "Revenus", icon: <Banknote size={14} /> },
+    { id: "payments", label: isRTL ? "المدفوعات" : "Paiements", icon: <Wallet size={14} /> },
     { id: "users", label: `${isRTL ? "المستخدمون" : "Utilisateurs"} (${users.length})`, icon: <Users size={14} /> },
     { id: "moderation", label: `${isRTL ? "الإشراف" : "Modération"}${alertCount > 0 ? ` (${alertCount})` : ""}`, icon: <ShieldCheck size={14} /> },
   ];
@@ -518,6 +520,11 @@ export default function AdminPage() {
               )}
             </div>
           </>
+        )}
+
+        {/* ═══════════ PAIEMENTS ═══════════ */}
+        {tab === "payments" && user && (
+          <TeacherPaymentsPanel adminUid={user.uid} />
         )}
 
         {/* ═══════════ UTILISATEURS ═══════════ */}

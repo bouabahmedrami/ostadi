@@ -9,6 +9,7 @@ import { Plus, Users, BarChart2, Copy, CheckCircle, X, BookOpen, ShieldCheck, Me
 import Link from "next/link";
 import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
 import TeacherRevenue from "@/components/TeacherRevenue";
+import BilanDownload from "@/components/BilanDownload";
 import TeacherProfileForm from "@/components/TeacherProfileForm";
 import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
 import EditClasseModal from "@/components/EditClasseModal";
@@ -349,7 +350,15 @@ export default function DashboardPage() {
 
         {/* ═══ TAB: REVENUS ═══ */}
         {activeTab === "revenus" && user && (
-          <TeacherRevenue teacherId={user.uid} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <TeacherRevenue teacherId={user.uid} />
+            {profile && (
+              <BilanDownload
+                teacherId={user.uid}
+                teacherName={profile.displayName}
+              />
+            )}
+          </div>
         )}
 
         {/* ═══ TAB: PROFIL ═══ */}
