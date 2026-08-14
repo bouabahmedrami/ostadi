@@ -58,6 +58,10 @@ export interface Classe {
    * et l'affichage existants compatibles.
    */
   sessions?: string[];
+  /** Nombre de vues — une par visiteur et par jour */
+  viewCount?: number;
+  /** Identifiant du cours d'origine, si celui-ci a été reconduit */
+  duplicatedFrom?: string;
 }
 
 export interface Enrollment {
@@ -69,6 +73,10 @@ export interface Enrollment {
   addedByTeacher: boolean;
   attended: boolean;
   enrolledAt: string;
+  /** Le professeur a-t-il encaissé cet élève ? */
+  paid?: boolean;
+  paidAt?: string | null;
+  paidAmount?: number;
 }
 
 export interface Rating {

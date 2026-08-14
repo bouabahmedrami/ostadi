@@ -64,7 +64,11 @@ service cloud.firestore {
       allow update: if isAdmin()
         || (isTeacher() && resource.data.teacherId == request.auth.uid)
         || (isStudent() && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['enrolledCount', 'attendanceCount']));
+            .hasOnly(['enrolledCount', 'attendanceCount']))
+        // Compteur de vues : modifiable par n'importe qui, mais lui seul.
+        // Un visiteur non connecté doit pouvoir être compté.
+        || request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['viewCount']);
       allow delete: if isAdmin()
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }
@@ -190,6 +194,34 @@ service cloud.firestore {
     // deux fois le même professeur dans la semaine.
     match /paymentReminders/{reminderId} {
       allow read, write: if isAdmin();
+    }
+
+    // ── Marqueurs de rappel ───────────────────────────────
+    // Évitent d'envoyer deux fois le même rappel de cours.
+    match /reminderMarkers/{markerId} {
+      allow read, create: if isAuth();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Supports de cours ─────────────────────────────────
+    // Le titre est visible par les connectés ; le fichier lui-même
+    // est protégé par les règles Storage.
+    match /materials/{materialId} {
+      allow read: if isAuth();
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow update, delete: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+    }
+
+    // ── Vues des cours ────────────────────────────────────
+    // Un document par visiteur et par jour, pour ne compter
+    // qu'une seule fois celui qui recharge la page.
+    match /classeViews/{viewId} {
+      allow read: if isAuth();
+      // Ouvert : les visiteurs non connectés parcourent aussi les cours
+      allow create: if true;
+      allow update, delete: if isAdmin();
     }
 
     // ── Collection admin privée (config, logs) ────────────

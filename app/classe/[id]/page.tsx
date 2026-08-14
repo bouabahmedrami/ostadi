@@ -5,14 +5,16 @@ import {
   getClasseById, getEnrollmentsByStudent, markAttendance,
   getRatingByStudentAndClasse, updateClasse, createNotification,
   getEnrollmentsByClasse, createEnrollmentRequest, getMyRequestForClasse,
+  trackClasseView,
 } from "@/lib/firestore";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import { Classe, Enrollment, EnrollmentRequest } from "@/lib/types";
-import { Video, Users, Clock, ArrowLeft, MessageCircle, CheckCircle, Star, MapPin, Calendar, Sparkles, Send, Hourglass, XCircle, Lock } from "lucide-react";
+import { Video, Users, Clock, ArrowLeft, MessageCircle, CheckCircle, Star, MapPin, Calendar, Sparkles, Send, Hourglass, XCircle, Lock, Eye } from "lucide-react";
 import { StarDisplay } from "@/components/StarRating";
 import LiveKitVideoRoom from "@/components/LiveKitVideoRoom";
 import RatingModal from "@/components/RatingModal";
+import CourseMaterials from "@/components/CourseMaterials";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -42,7 +44,21 @@ export default function ClassePage() {
     const t = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(t);
   }, []);
+
   useEffect(() => { if (id) loadClasse(); }, [id, user]);
+
+  /**
+   * Comptage de la vue.
+   *
+   * La fonction ignore le professeur consultant son propre cours et
+   * ne compte un visiteur connecté qu'une fois par jour — sinon un
+   * élève qui recharge la page ferait croire au professeur que son
+   * annonce intéresse, et fausserait sa décision de la reconduire.
+   */
+  useEffect(() => {
+    if (!classe) return;
+    trackClasseView(classe.id, user?.uid || null, classe.teacherId);
+  }, [classe?.id, user?.uid]);
 
   async function loadClasse() {
     setLoading(true);
@@ -228,6 +244,13 @@ export default function ClassePage() {
                   {item.label}
                 </div>
               ))}
+              {/* Compteur de vues — visible par le professeur uniquement */}
+              {isTeacher && ((classe as any).viewCount ?? 0) > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', color: '#60a5fa', fontSize: '13.5px', fontWeight: 500 }}>
+                  <Eye style={{ width: '15px', height: '15px' }} />
+                  {(classe as any).viewCount} {isRTL ? 'مشاهدة' : 'vues'}
+                </div>
+              )}
             </div>
             {classe.description && (
               <p style={{ color: 'rgba(196,181,253,0.65)', fontSize: '14px', marginTop: '16px', lineHeight: '1.7', paddingTop: '16px', borderTop: '1px solid rgba(124,58,237,0.15)' }}>
@@ -258,8 +281,8 @@ export default function ClassePage() {
               </div>
               <div className="ostadi-video-frame">
                 <LiveKitVideoRoom
-                   classeId={classe.id}
-                    isTeacher={isTeacher}
+                  classeId={classe.id}
+                  isTeacher={isTeacher}
                 />
               </div>
               {isEnrolled && !attended && (
@@ -316,8 +339,8 @@ export default function ClassePage() {
               }}>
                 {access.reason === "ended"
                   ? (isRTL
-                      ? "لم تعد قاعة الفيديو متاحة. يمكنك مراجعة التسجيلات إن رفعها الأستاذ."
-                      : "La salle vidéo n'est plus accessible. Consultez les enregistrements si le professeur en a publié.")
+                      ? "لم تعد قاعة الفيديو متاحة. يمكنك مراجعة الوثائق أدناه."
+                      : "La salle vidéo n'est plus accessible. Consultez les supports ci-dessous.")
                   : access.nextSession
                     ? (isRTL
                         ? `تفتح القاعة قبل 15 دقيقة من البداية — خلال ${timeUntil(access.nextSession, isRTL, now)}.`
@@ -332,15 +355,6 @@ export default function ClassePage() {
                     : ""}
                   {formatDate(access.nextSession)}
                 </p>
-              )}
-
-              {access.reason === "ended" && (
-                <Link href="/enregistrements" className="ostadi-btn-outline" style={{
-                  display: 'inline-flex', marginTop: '20px', padding: '11px 22px',
-                }}>
-                  <Video style={{ width: '15px', height: '15px' }} />
-                  {isRTL ? "التسجيلات" : "Voir les enregistrements"}
-                </Link>
               )}
             </div>
           ) : (
@@ -462,6 +476,18 @@ export default function ClassePage() {
             </>
           )}
 
+          {/* ═══ SUPPORTS DE COURS ═══
+              Ce qui reste du cours une fois la visio terminée.
+              Les non-inscrits voient les titres mais pas les liens. */}
+          {classe && (
+            <CourseMaterials
+              classeId={classe.id}
+              teacherId={classe.teacherId}
+              isTeacher={isTeacher}
+              canAccess={isEnrolled || isTeacher}
+            />
+          )}
+
           {/* ═══ RATING ═══ */}
           {isEnrolled && attended && (
             <div className="ostadi-card" style={{ padding: '20px' }}>
@@ -534,7 +560,7 @@ export default function ClassePage() {
           )}
 
           {/* ═══ INFO ROW ═══ */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
             <div className="ostadi-card ostadi-card-hover" style={{ padding: '18px' }}>
               <h3 style={{ color: '#8b7bb8', fontSize: '11.5px', fontWeight: 700, margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>{isRTL ? "الأستاذ" : "Professeur"}</h3>
               <Link href={`/professeur/${classe.teacherId}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', textDecoration: 'none' }}>
@@ -566,7 +592,7 @@ export default function ClassePage() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ color: '#FF8C00', fontWeight: 800, fontSize: '17px' }}>{classe.price.toLocaleString()}</span>
-                  <span style={{ color: '#a78bfa', fontSize: '12.5px' }}>DA / {trPriceType(classe.priceType, isRTL)}</span>
+                  <span style={{ color: '#a78bfa', fontSize: '12.5px' }}>{isRTL ? "دج" : "DA"} / {trPriceType(classe.priceType, isRTL)}</span>
                 </div>
               </div>
             </div>

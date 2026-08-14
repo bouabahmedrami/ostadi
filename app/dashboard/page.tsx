@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import { getClasses, createClasse, getEnrollmentsByClasse, enrollStudent, getTeacherStats, generateJitsiRoom, autoArchiveFinishedClasses } from "@/lib/firestore";
 import { Classe, Enrollment, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
-import { Plus, Users, BarChart2, Copy, CheckCircle, X, BookOpen, ShieldCheck, MessageCircle, Star, TrendingUp, Zap, Pencil } from "lucide-react";
+import { Plus, Users, Copy, CheckCircle, X, BookOpen, ShieldCheck, MessageCircle, Star, TrendingUp, Zap, Pencil, CopyPlus, BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
 import TeacherRevenue from "@/components/TeacherRevenue";
@@ -15,6 +15,9 @@ import TeacherProfileForm from "@/components/TeacherProfileForm";
 import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
 import EditClasseModal from "@/components/EditClasseModal";
 import SessionsPicker from "@/components/SessionsPicker";
+import DuplicateClasseModal from "@/components/DuplicateClasseModal";
+import ClasseStats from "@/components/ClasseStats";
+import StudentPayments from "@/components/StudentPayments";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   return (
@@ -41,8 +44,9 @@ export default function DashboardPage() {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"cours" | "revenus" | "profil">("cours");
+  const [activeTab, setActiveTab] = useState<"cours" | "stats" | "revenus" | "profil">("cours");
   const [editingClasse, setEditingClasse] = useState<Classe | null>(null);
+  const [duplicating, setDuplicating] = useState<Classe | null>(null);
 
   const [form, setForm] = useState({
     title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "",
@@ -121,6 +125,7 @@ export default function DashboardPage() {
         jitsiRoom,
         enrolledCount: 0,
         attendanceCount: 0,
+        viewCount: 0,
         status: "scheduled",
         createdAt: new Date().toISOString(),
       });
@@ -192,6 +197,7 @@ export default function DashboardPage() {
 
   const inputStyle = { width: '100%', background: '#1A0A3C', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '12px', padding: '12px', fontSize: '14px', color: 'white', outline: 'none', boxSizing: 'border-box' as const };
   const labelStyle = { display: 'block', fontSize: '13px', fontWeight: 600, color: 'rgba(196,181,253,0.8)', marginBottom: '6px' };
+  const smallBtn = { display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit' };
 
   return (
     <div style={{ background: '#0D0118', minHeight: '100vh', backgroundImage: 'linear-gradient(rgba(168,85,247,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(168,85,247,0.04) 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
@@ -268,9 +274,10 @@ export default function DashboardPage() {
         {user && <CommissionAlert teacherId={user.uid} />}
 
         {/* ═══ TABS ═══ */}
-        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', borderBottom: '1px solid rgba(88,28,135,0.3)', paddingBottom: '2px' }}>
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', borderBottom: '1px solid rgba(88,28,135,0.3)', paddingBottom: '2px', flexWrap: 'wrap' }}>
           {[
             { id: "cours", label: "📚 Mes cours", count: classes.length },
+            { id: "stats", label: "📊 Performance", count: null },
             { id: "revenus", label: "💰 Revenus", count: null },
             { id: "profil", label: "👤 Mon profil", count: null },
           ].map(tab => (
@@ -282,7 +289,7 @@ export default function DashboardPage() {
                 padding: '10px 16px', fontSize: '13.5px', fontWeight: 700,
                 color: activeTab === tab.id ? '#FF8C00' : '#a78bfa',
                 borderBottom: activeTab === tab.id ? '2px solid #FF8C00' : '2px solid transparent',
-                marginBottom: '-2px', transition: 'all 0.2s ease',
+                marginBottom: '-2px', transition: 'all 0.2s ease', fontFamily: 'inherit',
               }}
             >
               {tab.label} {tab.count !== null && <span style={{ opacity: 0.7 }}>({tab.count})</span>}
@@ -311,15 +318,21 @@ export default function DashboardPage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
                         <span style={{ background: 'rgba(88,28,135,0.5)', color: '#c4b5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px', border: '1px solid rgba(126,34,206,0.4)' }}>{trSubject(c.subject, isRTL)}</span>
                         <span style={{ background: 'rgba(29,78,216,0.2)', color: '#93c5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>{trLevel(c.level, isRTL)}</span>
+                        {(c as any).sessions?.length > 1 && (
+                          <span style={{ background: 'rgba(255,140,0,0.15)', color: '#fdba74', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>
+                            📅 {(c as any).sessions.length} séances
+                          </span>
+                        )}
                         {c.status === 'live' && <span style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', fontSize: '11px', padding: '3px 10px', borderRadius: '999px', animation: 'pulse 2s infinite' }}>🔴 Live</span>}
                       </div>
                       <div style={{ fontWeight: 700, color: 'white', fontSize: '15px', marginBottom: '4px' }}>{c.title}</div>
                       <div style={{ fontSize: '12px', color: '#a78bfa' }}>
                         {formatDate(c.dateTime)} · {c.durationMinutes} min · <span style={{ color: '#FF8C00', fontWeight: 700 }}>{c.price.toLocaleString()} DA</span>
                       </div>
-                      <div style={{ fontSize: '12px', color: '#6d28d9', marginTop: '4px', display: 'flex', gap: '12px' }}>
+                      <div style={{ fontSize: '12px', color: '#6d28d9', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                         <span>👥 {c.enrolledCount} inscrits</span>
                         <span>✅ {c.attendanceCount} présents</span>
+                        {((c as any).viewCount ?? 0) > 0 && <span>👁 {(c as any).viewCount} vues</span>}
                       </div>
                     </div>
 
@@ -330,18 +343,22 @@ export default function DashboardPage() {
                       >
                         {c.status === 'live' ? '🔴 En direct' : '▶ Démarrer'}
                       </Link>
-                      <button onClick={() => setEditingClasse(c)} style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                      <button onClick={() => setEditingClasse(c)} style={smallBtn}>
                         <Pencil style={{ width: '14px', height: '14px' }} /> Modifier
                       </button>
-                      <button onClick={() => openStudents(c)} style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                      {/* Reconduction — reprend tout sauf les dates */}
+                      <button onClick={() => setDuplicating(c)} style={smallBtn} title={isRTL ? "إعادة نشر" : "Reconduire"}>
+                        <CopyPlus style={{ width: '14px', height: '14px' }} /> {isRTL ? "إعادة نشر" : "Reconduire"}
+                      </button>
+                      <button onClick={() => openStudents(c)} style={smallBtn}>
                         <Users style={{ width: '14px', height: '14px' }} /> Élèves
                       </button>
-                      <Link href={`/chat/${c.id}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', textDecoration: 'none', fontSize: '13px', fontWeight: 600 }}>
+                      <Link href={`/chat/${c.id}`} style={{ ...smallBtn, textDecoration: 'none' }}>
                         <MessageCircle style={{ width: '14px', height: '14px' }} /> Chat
                       </Link>
                       <button
                         onClick={() => copyLink(c.id)}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: copied === c.id ? '#34d399' : '#c4b5fd', background: copied === c.id ? 'rgba(6,78,59,0.3)' : 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, transition: '0.2s' }}
+                        style={{ ...smallBtn, color: copied === c.id ? '#34d399' : '#c4b5fd', background: copied === c.id ? 'rgba(6,78,59,0.3)' : 'transparent', transition: '0.2s' }}
                       >
                         {copied === c.id ? <CheckCircle style={{ width: '14px', height: '14px' }} /> : <Copy style={{ width: '14px', height: '14px' }} />}
                         {copied === c.id ? 'Copié !' : 'Lien'}
@@ -352,6 +369,22 @@ export default function DashboardPage() {
               </div>
             )}
           </>
+        )}
+
+        {/* ═══ TAB: PERFORMANCE ═══ */}
+        {activeTab === "stats" && user && (
+          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '20px' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '9px', color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 4px' }}>
+              <BarChart3 style={{ width: '17px', height: '17px', color: '#FF8C00' }} />
+              {isRTL ? "أداء إعلاناتك" : "Performance de vos annonces"}
+            </h2>
+            <p style={{ color: '#6d28d9', fontSize: '11.5px', margin: '0 0 16px' }}>
+              {isRTL
+                ? "من المشاهدة إلى التسجيل — اعرف أين تفقد الطلاب."
+                : "De la vue à l'inscription — voyez où vous perdez des élèves."}
+            </p>
+            <ClasseStats teacherId={user.uid} />
+          </div>
         )}
 
         {/* ═══ TAB: REVENUS ═══ */}
@@ -505,10 +538,12 @@ export default function DashboardPage() {
       {/* Students modal */}
       {selectedClasse && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '20px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
+          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '20px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <div>
-                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>Élèves</h2>
+                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>
+                  {isRTL ? "الطلاب والمدفوعات" : "Élèves & paiements"}
+                </h2>
                 <p style={{ color: '#a78bfa', fontSize: '13px', margin: '4px 0 0' }}>{selectedClasse.title}</p>
               </div>
               <button onClick={() => setSelectedClasse(null)} style={{ background: 'rgba(88,28,135,0.3)', border: 'none', borderRadius: '10px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#a78bfa' }}>
@@ -516,7 +551,17 @@ export default function DashboardPage() {
               </button>
             </div>
 
-            <div style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '14px', padding: '16px', marginBottom: '20px' }}>
+            {/* ═══ SUIVI DES ENCAISSEMENTS ═══ */}
+            <div style={{ marginBottom: '20px' }}>
+              <StudentPayments
+                classeId={selectedClasse.id}
+                classePrice={selectedClasse.price}
+                classeTitle={selectedClasse.title}
+              />
+            </div>
+
+            {/* ═══ AJOUT MANUEL ═══ */}
+            <div style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '14px', padding: '16px' }}>
               <p style={{ fontSize: '12px', color: '#fdba74', marginBottom: '12px', fontWeight: 600 }}>
                 ⚠️ En ajoutant un élève, vous confirmez avoir reçu son paiement.
               </p>
@@ -533,22 +578,6 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {enrollments.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#a78bfa', fontSize: '14px', padding: '20px 0' }}>Aucun élève inscrit</p>
-              ) : enrollments.map((e) => (
-                <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: 'rgba(88,28,135,0.15)', borderRadius: '12px' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, color: 'white', fontSize: '14px' }}>{e.studentName}</div>
-                    <div style={{ fontSize: '12px', color: '#a78bfa' }}>{e.studentPhone}</div>
-                  </div>
-                  <span style={{ fontSize: '12px', fontWeight: 600, padding: '4px 10px', borderRadius: '999px', background: e.attended ? 'rgba(6,78,59,0.4)' : 'rgba(88,28,135,0.3)', color: e.attended ? '#34d399' : '#a78bfa' }}>
-                    {e.attended ? "✅ Présent" : "En attente"}
-                  </span>
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       )}
@@ -560,6 +589,15 @@ export default function DashboardPage() {
           onClose={() => setEditingClasse(null)}
           onSaved={loadData}
           onDeleted={loadData}
+        />
+      )}
+
+      {/* Reconduction */}
+      {duplicating && (
+        <DuplicateClasseModal
+          classe={duplicating}
+          onClose={() => setDuplicating(null)}
+          onDone={loadData}
         />
       )}
 

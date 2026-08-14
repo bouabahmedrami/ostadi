@@ -55,6 +55,14 @@ service firebase.storage {
       allow delete: if isAuth();
     }
 
+    // ── Supports de cours ─────────────────────────────────
+    // PDF, images, exercices déposés par le professeur.
+    match /materials/{allPaths=**} {
+      allow read: if isAuth();
+      allow write: if isAuth() && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isAuth();
+    }
+
     // ── Tout le reste : bloqué ────────────────────────────
     match /{allPaths=**} {
       allow read, write: if false;

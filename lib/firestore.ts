@@ -1,6 +1,7 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc,
   query, where, orderBy, setDoc, deleteDoc, writeBatch, limit,
+  increment,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { Classe, Enrollment, UserProfile, Rating } from "./types";
@@ -1591,4 +1592,504 @@ export async function getLastReminder(teacherId: string): Promise<string | null>
     )
   );
   return snap.empty ? null : (snap.docs[0].data() as any).sentAt;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// RAPPELS · PAIEMENTS ÉLÈVES · SUPPORTS DE COURS
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. RAPPELS AVANT LE COURS
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Crée les rappels pour les cours à venir d'un utilisateur.
+ *
+ * Appelé au chargement de l'application. Sans Cloud Function planifiée
+ * (qui exigerait le plan Blaze), c'est le passage de l'utilisateur qui
+ * déclenche la vérification. Un élève qui ouvre l'app le matin reçoit
+ * son rappel pour le cours du soir.
+ *
+ * Deux fenêtres : 24 h avant, puis 1 h avant.
+ * Le champ `remindersSent` sur l'inscription évite les doublons.
+ */
+export async function checkAndCreateReminders(userId: string, role: string): Promise<number> {
+  const now = Date.now();
+  const in24h = now + 24 * 3600_000;
+  const in1h = now + 3600_000;
+
+  // Cours concernés selon le rôle
+  let classeIds: string[] = [];
+  let enrollDocs: { id: string; data: any }[] = [];
+
+  if (role === "teacher") {
+    const snap = await getDocs(
+      query(collection(db, "classes"), where("teacherId", "==", userId))
+    );
+    classeIds = snap.docs.map(d => d.id);
+  } else {
+    const snap = await getDocs(
+      query(collection(db, "enrollments"), where("studentId", "==", userId))
+    );
+    enrollDocs = snap.docs.map(d => ({ id: d.id, data: d.data() }));
+    classeIds = [...new Set(enrollDocs.map(e => e.data.classeId as string))];
+  }
+
+  if (classeIds.length === 0) return 0;
+
+  let created = 0;
+
+  for (const classeId of classeIds) {
+    const cSnap = await getDoc(doc(db, "classes", classeId));
+    if (!cSnap.exists()) continue;
+
+    const c = cSnap.data() as any;
+    if (c.status === "ended") continue;
+
+    // Cours mensuel : chaque séance a son rappel
+    const dates: string[] =
+      Array.isArray(c.sessions) && c.sessions.length > 0
+        ? c.sessions
+        : [c.dateTime];
+
+    for (const iso of dates) {
+      const startMs = new Date(iso).getTime();
+      if (Number.isNaN(startMs) || startMs < now) continue;
+
+      // Quelle fenêtre ?
+      let kind: "24h" | "1h" | null = null;
+      if (startMs <= in1h) kind = "1h";
+      else if (startMs <= in24h) kind = "24h";
+      if (!kind) continue;
+
+      // Déjà envoyé ?
+      const markerId = `${userId}_${classeId}_${iso}_${kind}`;
+      const marker = await getDoc(doc(db, "reminderMarkers", markerId));
+      if (marker.exists()) continue;
+
+      const when = new Date(iso).toLocaleString("fr-DZ", {
+        weekday: "long", day: "2-digit", month: "long",
+        hour: "2-digit", minute: "2-digit",
+      });
+
+      await addDoc(collection(db, "notifications"), {
+        userId,
+        type: "live",
+        title: kind === "1h" ? "⏰ Votre cours commence bientôt" : "📅 Cours demain",
+        body: kind === "1h"
+          ? `« ${c.title} » démarre dans moins d'une heure. La salle ouvre 15 min avant.`
+          : `« ${c.title} » aura lieu ${when}.`,
+        link: `/classe/${classeId}`,
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Marqueur anti-doublon
+      await setDoc(doc(db, "reminderMarkers", markerId), {
+        userId, classeId, sessionDate: iso, kind,
+        createdAt: new Date().toISOString(),
+      });
+
+      created++;
+    }
+  }
+
+  return created;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. SUIVI DES PAIEMENTS ÉLÈVE PAR ÉLÈVE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Marque une inscription comme payée ou non.
+ *
+ * Le professeur encaisse directement de l'élève, hors plateforme.
+ * Sans ce suivi, il tient son tableau sur papier — et ta commission
+ * se calcule sur des inscriptions parfois jamais réglées.
+ */
+export async function setEnrollmentPaid(
+  enrollmentId: string,
+  paid: boolean,
+  amount?: number
+): Promise<void> {
+  const data: any = {
+    paid,
+    paidAt: paid ? new Date().toISOString() : null,
+  };
+  if (paid && amount !== undefined) data.paidAmount = amount;
+
+  await updateDoc(doc(db, "enrollments", enrollmentId), data);
+}
+
+/** Inscriptions d'un cours, avec l'état de paiement */
+export async function getClasseEnrollmentsWithPayment(classeId: string) {
+  const snap = await getDocs(
+    query(collection(db, "enrollments"), where("classeId", "==", classeId))
+  );
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .sort((a, b) => (a.studentName || "").localeCompare(b.studentName || ""));
+}
+
+/** Récapitulatif des encaissements d'un professeur */
+export async function getTeacherPaymentSummary(teacherId: string) {
+  const [classesSnap, enrollSnap] = await Promise.all([
+    getDocs(query(collection(db, "classes"), where("teacherId", "==", teacherId))),
+    getDocs(collection(db, "enrollments")),
+  ]);
+
+  const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const classIds = new Set(classes.map(c => c.id));
+  const priceMap = new Map(classes.map(c => [c.id, c.price || 0]));
+
+  const enrollments = enrollSnap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .filter(e => classIds.has(e.classeId));
+
+  const paid = enrollments.filter(e => e.paid);
+  const unpaid = enrollments.filter(e => !e.paid);
+
+  const collected = paid.reduce(
+    (s, e) => s + (e.paidAmount ?? priceMap.get(e.classeId) ?? 0),
+    0
+  );
+  const pending = unpaid.reduce((s, e) => s + (priceMap.get(e.classeId) || 0), 0);
+
+  return {
+    totalEnrollments: enrollments.length,
+    paidCount: paid.length,
+    unpaidCount: unpaid.length,
+    collected,
+    pending,
+    // La commission ne porte que sur les sommes réellement encaissées
+    commissionDue: Math.round(collected * 0.10),
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 3. SUPPORTS DE COURS
+// ═══════════════════════════════════════════════════════════
+
+export interface CourseMaterial {
+  id: string;
+  classeId: string;
+  teacherId: string;
+  title: string;
+  description?: string;
+  fileURL: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  /** Numéro de séance concernée, pour les cours mensuels */
+  sessionIndex?: number;
+  createdAt: string;
+}
+
+/** Ajoute un support à un cours et prévient les élèves inscrits */
+export async function addCourseMaterial(
+  data: Omit<CourseMaterial, "id" | "createdAt">
+): Promise<string> {
+  const now = new Date().toISOString();
+
+  const ref = await addDoc(collection(db, "materials"), {
+    ...data,
+    createdAt: now,
+  });
+
+  // Notification aux inscrits
+  try {
+    const [classeSnap, enrollSnap] = await Promise.all([
+      getDoc(doc(db, "classes", data.classeId)),
+      getDocs(query(collection(db, "enrollments"), where("classeId", "==", data.classeId))),
+    ]);
+
+    const title = classeSnap.exists() ? (classeSnap.data() as any).title : "votre cours";
+
+    const batch = writeBatch(db);
+    enrollSnap.docs.forEach(e => {
+      const studentId = (e.data() as any).studentId;
+      if (!studentId) return;
+      batch.set(doc(collection(db, "notifications")), {
+        userId: studentId,
+        type: "recording",
+        title: "📎 Nouveau support disponible",
+        body: `« ${data.title} » a été ajouté au cours « ${title} ».`,
+        link: `/classe/${data.classeId}`,
+        read: false,
+        createdAt: now,
+      });
+    });
+    await batch.commit();
+  } catch (err) {
+    console.warn("Notification des supports échouée :", err);
+  }
+
+  return ref.id;
+}
+
+/** Supports d'un cours, du plus récent au plus ancien */
+export async function getCourseMaterials(classeId: string): Promise<CourseMaterial[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "materials"),
+      where("classeId", "==", classeId),
+      orderBy("createdAt", "desc")
+    )
+  );
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as CourseMaterial));
+}
+
+/** Supprime un support */
+export async function deleteCourseMaterial(materialId: string): Promise<void> {
+  await deleteDoc(doc(db, "materials", materialId));
+}
+
+/** Tous les supports accessibles à un élève */
+export async function getStudentMaterials(studentId: string) {
+  const enrollSnap = await getDocs(
+    query(collection(db, "enrollments"), where("studentId", "==", studentId))
+  );
+  const classeIds = [...new Set(enrollSnap.docs.map(d => (d.data() as any).classeId))];
+  if (classeIds.length === 0) return [];
+
+  const out: CourseMaterial[] = [];
+  // L'opérateur `in` de Firestore est limité à 10 valeurs
+  for (let i = 0; i < classeIds.length; i += 10) {
+    const chunk = classeIds.slice(i, i + 10);
+    const snap = await getDocs(
+      query(collection(db, "materials"), where("classeId", "in", chunk))
+    );
+    out.push(...snap.docs.map(d => ({ id: d.id, ...d.data() } as CourseMaterial)));
+  }
+
+  return out.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// DUPLICATION DE COURS · STATISTIQUES DE VUE
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. DUPLICATION DE COURS
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Duplique un cours existant avec de nouvelles dates.
+ *
+ * Un professeur qui donne le même cours chaque mois ressaisissait tout :
+ * titre, matière, niveau, prix, description, WhatsApp. Cette fonction
+ * ne reprend que ce qui est stable et remet à zéro ce qui ne l'est pas.
+ *
+ * Ce qui n'est PAS copié : les inscriptions, les présences, la salle
+ * vidéo, le statut. Un cours dupliqué démarre vierge.
+ */
+export async function duplicateClasse(
+  sourceClasseId: string,
+  newDates: { dateTime: string; sessions?: string[] }
+): Promise<string> {
+  const snap = await getDoc(doc(db, "classes", sourceClasseId));
+  if (!snap.exists()) throw new Error("classe-not-found");
+
+  const src = snap.data() as any;
+  const now = new Date().toISOString();
+
+  // Nouvelle salle : réutiliser l'ancienne laisserait les anciens
+  // élèves rejoindre le nouveau cours sans s'y être inscrits
+  const jitsiRoom = `ostadi-${Math.random().toString(36).slice(2, 10)}`;
+
+  const data: any = {
+    // Repris tel quel
+    teacherId: src.teacherId,
+    teacherName: src.teacherName,
+    teacherPhoto: src.teacherPhoto || "",
+    teacherRating: src.teacherRating ?? 0,
+    title: src.title,
+    subject: src.subject,
+    level: src.level,
+    wilaya: src.wilaya,
+    price: src.price,
+    priceType: src.priceType,
+    durationMinutes: src.durationMinutes,
+    description: src.description || "",
+    whatsapp: src.whatsapp || "",
+
+    // Nouvelles dates
+    dateTime: newDates.dateTime,
+    ...(newDates.sessions ? { sessions: newDates.sessions } : {}),
+
+    // Remis à zéro
+    jitsiRoom,
+    enrolledCount: 0,
+    attendanceCount: 0,
+    viewCount: 0,
+    status: "scheduled",
+    createdAt: now,
+    duplicatedFrom: sourceClasseId,
+  };
+
+  const ref = await addDoc(collection(db, "classes"), data);
+  return ref.id;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. STATISTIQUES DE VUE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Enregistre une vue sur un cours.
+ *
+ * Deux garde-fous :
+ *  • le professeur ne gonfle pas ses propres chiffres
+ *  • un même visiteur n'est compté qu'une fois par jour
+ *
+ * Sans le second, un élève qui recharge la page dix fois ferait croire
+ * au professeur que son cours intéresse — et fausserait sa décision
+ * de le reconduire ou non.
+ */
+export async function trackClasseView(
+  classeId: string,
+  viewerId: string | null,
+  teacherId: string
+): Promise<void> {
+  // Le professeur consultant son propre cours ne compte pas
+  if (viewerId && viewerId === teacherId) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const key = viewerId
+    ? `${classeId}_${viewerId}_${today}`
+    : `${classeId}_anon_${today}_${Math.random().toString(36).slice(2, 8)}`;
+
+  // Visiteur connecté : une vue par jour maximum
+  if (viewerId) {
+    const marker = await getDoc(doc(db, "classeViews", key));
+    if (marker.exists()) return;
+  }
+
+  try {
+    await setDoc(doc(db, "classeViews", key), {
+      classeId,
+      viewerId: viewerId || null,
+      date: today,
+      createdAt: new Date().toISOString(),
+    });
+
+    await updateDoc(doc(db, "classes", classeId), {
+      viewCount: increment(1),
+    });
+  } catch (err) {
+    // Non bloquant : un compteur de vues ne doit jamais casser une page
+    console.warn("Enregistrement de la vue échoué :", err);
+  }
+}
+
+export interface ClasseStats {
+  views: number;
+  requests: number;
+  enrollments: number;
+  /** Part des visiteurs ayant envoyé une demande */
+  requestRate: number;
+  /** Part des demandes acceptées */
+  acceptRate: number;
+  /** Part des visiteurs devenus élèves */
+  conversionRate: number;
+  viewsLast7Days: number;
+}
+
+/**
+ * Statistiques d'un cours — de la vue à l'inscription.
+ *
+ * Le professeur voit où ça bloque : personne ne regarde (problème de
+ * visibilité), on regarde mais on ne demande pas (prix ou description),
+ * on demande mais il n'accepte pas (son propre délai de réponse).
+ */
+export async function getClasseStats(classeId: string): Promise<ClasseStats> {
+  const [classeSnap, viewsSnap, requestsSnap, enrollSnap] = await Promise.all([
+    getDoc(doc(db, "classes", classeId)),
+    getDocs(query(collection(db, "classeViews"), where("classeId", "==", classeId))),
+    getDocs(query(collection(db, "enrollmentRequests"), where("classeId", "==", classeId))),
+    getDocs(query(collection(db, "enrollments"), where("classeId", "==", classeId))),
+  ]);
+
+  const views = classeSnap.exists()
+    ? ((classeSnap.data() as any).viewCount || viewsSnap.size)
+    : viewsSnap.size;
+
+  const requests = requestsSnap.size;
+  const accepted = requestsSnap.docs.filter(
+    d => (d.data() as any).status === "accepted"
+  ).length;
+  const enrollments = enrollSnap.size;
+
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const viewsLast7Days = viewsSnap.docs.filter(
+    d => (d.data() as any).date >= weekAgo
+  ).length;
+
+  const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
+
+  return {
+    views,
+    requests,
+    enrollments,
+    requestRate: pct(requests, views),
+    acceptRate: pct(accepted, requests),
+    conversionRate: pct(enrollments, views),
+    viewsLast7Days,
+  };
+}
+
+/** Statistiques de tous les cours d'un professeur */
+export async function getTeacherClassesStats(teacherId: string) {
+  const classesSnap = await getDocs(
+    query(collection(db, "classes"), where("teacherId", "==", teacherId))
+  );
+  if (classesSnap.empty) return [];
+
+  const classes = classesSnap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  const ids = classes.map(c => c.id);
+
+  // L'opérateur `in` est limité à 10 valeurs
+  const allViews: any[] = [];
+  const allRequests: any[] = [];
+
+  for (let i = 0; i < ids.length; i += 10) {
+    const chunk = ids.slice(i, i + 10);
+    const [v, r] = await Promise.all([
+      getDocs(query(collection(db, "classeViews"), where("classeId", "in", chunk))),
+      getDocs(query(collection(db, "enrollmentRequests"), where("classeId", "in", chunk))),
+    ]);
+    allViews.push(...v.docs.map(d => d.data()));
+    allRequests.push(...r.docs.map(d => d.data()));
+  }
+
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+  return classes.map(c => {
+    const views = c.viewCount || allViews.filter(v => v.classeId === c.id).length;
+    const reqs = allRequests.filter(r => r.classeId === c.id);
+    const enrolled = c.enrolledCount || 0;
+
+    return {
+      classeId: c.id,
+      title: c.title,
+      subject: c.subject,
+      status: c.status,
+      dateTime: c.dateTime,
+      price: c.price,
+      views,
+      viewsLast7Days: allViews.filter(v => v.classeId === c.id && v.date >= weekAgo).length,
+      requests: reqs.length,
+      pendingRequests: reqs.filter(r => r.status === "pending").length,
+      enrollments: enrolled,
+      conversionRate: views > 0 ? Math.round((enrolled / views) * 100) : 0,
+    };
+  }).sort((a, b) => b.views - a.views);
 }
