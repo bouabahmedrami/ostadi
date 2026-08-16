@@ -13,6 +13,7 @@ import { StarDisplay } from "@/components/StarRating";
 import ClasseCard from "@/components/ClasseCard";
 import Avatar from "@/components/Avatar";
 import { AvailabilityDisplay } from "@/components/Availability";
+import ReportButton from "@/components/ReportButton";
 import {
   MapPin, BookOpen, Users, Star,
   ArrowLeft, Clock, ShieldCheck, GraduationCap, Briefcase,
@@ -270,6 +271,19 @@ export default function TeacherProfilePage() {
             )}
           </div>
         )}
+        {/* ═══ SIGNALEMENT ═══
+            Placé en bas, volontairement discret : un élève qui hésite
+            ne signalera pas si le geste paraît accusateur. */}
+        <div style={{
+          textAlign: 'center', marginTop: '32px', paddingTop: '20px',
+          borderTop: '1px solid rgba(124,58,237,0.12)',
+        }}>
+          <ReportButton
+            targetType="teacher"
+            targetId={uid as string}
+            targetName={teacher.displayName}
+          />
+        </div>
       </div>
 
       <style jsx global>{`

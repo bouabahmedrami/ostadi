@@ -11,10 +11,11 @@ import {
   activateSubscription, rejectSubscription,
 } from "@/lib/firestore";
 import TeacherPaymentsPanel from "@/components/TeacherPaymentsPanel";
+import ReportsPanel from "@/components/ReportsPanel";
 import {
   Users, BookOpen, Banknote, TrendingUp, ShieldCheck, Crown, Star,
   AlertTriangle, Eye, Check, X, MapPin, BarChart3, Wallet, UserCheck,
-  Video, Lock, Activity,
+  Video, Lock, Activity, Flag, Database, Loader2,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
@@ -108,11 +109,13 @@ export default function AdminPage() {
   const [verifications, setVerifications] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [tab, setTab] = useState<"overview" | "revenue" | "payments" | "users" | "moderation">("overview");
+  const [tab, setTab] = useState<"overview" | "revenue" | "payments" | "users" | "moderation" | "reports">("overview");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [migrating, setMigrating] = useState(false);
+  const [migrationResult, setMigrationResult] = useState<string | null>(null);
 
   const isAdmin = isAdminUser(user?.uid);
 
@@ -190,6 +193,41 @@ export default function AdminPage() {
     finally { setActionLoading(null); }
   }
 
+  /**
+   * Migration des messages — à lancer UNE FOIS avant de déployer
+   * la nouvelle règle Firestore sur la collection `messages`.
+   *
+   * Sans elle, les messages antérieurs deviennent illisibles pour
+   * leurs propres auteurs : la règle exige un champ `participants`
+   * que les anciens documents n'ont pas.
+   */
+  async function runMigration() {
+    if (!window.confirm(
+      isRTL
+        ? "تشغيل ترحيل الرسائل؟\n\nيضيف حقل المشاركين إلى الرسائل القديمة.\nآمن ويمكن تكراره."
+        : "Lancer la migration des messages ?\n\nAjoute le champ participants aux anciens messages.\nSans risque, peut être relancé."
+    )) return;
+
+    setMigrating(true);
+    setMigrationResult(null);
+    try {
+      const { migrateMessagesParticipants } = await import("@/lib/firestore");
+      const r = await migrateMessagesParticipants();
+      setMigrationResult(
+        isRTL
+          ? `✓ ${r.migrated} رسالة تم ترحيلها · ${r.skipped} متجاوَزة · ${r.total} الإجمالي`
+          : `✓ ${r.migrated} migrés · ${r.skipped} déjà à jour · ${r.total} au total`
+      );
+    } catch (err: any) {
+      console.error("Migration échouée :", err);
+      setMigrationResult(
+        isRTL ? "✗ فشل الترحيل — راجع الطرفية" : "✗ Échec — voir la console"
+      );
+    } finally {
+      setMigrating(false);
+    }
+  }
+
   const fmt = (n: number) => (n || 0).toLocaleString("fr-DZ");
   const DA = isRTL ? "دج" : "DA";
 
@@ -234,6 +272,7 @@ export default function AdminPage() {
     { id: "payments", label: isRTL ? "المدفوعات" : "Paiements", icon: <Wallet size={14} /> },
     { id: "users", label: `${isRTL ? "المستخدمون" : "Utilisateurs"} (${users.length})`, icon: <Users size={14} /> },
     { id: "moderation", label: `${isRTL ? "الإشراف" : "Modération"}${alertCount > 0 ? ` (${alertCount})` : ""}`, icon: <ShieldCheck size={14} /> },
+    { id: "reports", label: isRTL ? "الإبلاغات" : "Signalements", icon: <Flag size={14} /> },
   ];
 
   return (
@@ -588,6 +627,71 @@ export default function AdminPage() {
               </div>
             )}
           </div>
+        )}
+
+        {/* ═══════════ SIGNALEMENTS ═══════════ */}
+        {tab === "reports" && (
+          <>
+            <div style={S.card}>
+              <h3 style={S.cardTitle}>
+                <Flag size={16} style={{ color: C.orange }} />
+                {isRTL ? "الإبلاغات" : "Signalements"}
+              </h3>
+              <ReportsPanel />
+            </div>
+
+            {/* ═══ OUTILS DE MAINTENANCE ═══ */}
+            <div style={{ ...S.card, borderColor: "rgba(59,130,246,0.28)" }}>
+              <h3 style={S.cardTitle}>
+                <Database size={16} style={{ color: "#60a5fa" }} />
+                {isRTL ? "أدوات الصيانة" : "Maintenance"}
+              </h3>
+
+              <div style={{
+                background: "rgba(59,130,246,0.06)",
+                border: "1px solid rgba(59,130,246,0.22)",
+                borderRadius: 12, padding: 14,
+              }}>
+                <p style={{ color: "#93c5fd", fontSize: 13, fontWeight: 700, margin: "0 0 6px" }}>
+                  {isRTL ? "ترحيل الرسائل" : "Migration des messages"}
+                </p>
+                <p style={{ color: "#8b7bb8", fontSize: 11.5, margin: "0 0 12px", lineHeight: 1.6 }}>
+                  {isRTL
+                    ? "أضف حقل المشاركين إلى الرسائل القديمة. شغّله مرة واحدة قبل نشر القاعدة الجديدة — وإلا لن يستطيع أحد قراءة رسائله السابقة."
+                    : "Ajoute le champ participants aux anciens messages. À lancer UNE FOIS avant de déployer la nouvelle règle Firestore — sinon plus personne ne pourra lire ses propres messages."}
+                </p>
+
+                <button
+                  onClick={runMigration}
+                  disabled={migrating}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    background: "linear-gradient(135deg, #3B82F6, #2563EB)",
+                    color: "white", fontWeight: 700, padding: "11px 20px",
+                    borderRadius: 11, border: "none",
+                    cursor: migrating ? "not-allowed" : "pointer",
+                    fontSize: 13, fontFamily: "inherit",
+                    opacity: migrating ? 0.6 : 1,
+                  }}
+                >
+                  {migrating
+                    ? <><Loader2 size={15} style={{ animation: "adspin 0.8s linear infinite" }} /> {isRTL ? "جارٍ..." : "Migration..."}</>
+                    : <><Database size={15} /> {isRTL ? "تشغيل الترحيل" : "Lancer la migration"}</>}
+                </button>
+
+                {migrationResult && (
+                  <p style={{
+                    color: migrationResult.startsWith("✓") ? "#4ade80" : "#f87171",
+                    fontSize: 12.5, margin: "12px 0 0", fontWeight: 600,
+                  }}>
+                    {migrationResult}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <style>{`@keyframes adspin { to { transform: rotate(360deg); } }`}</style>
+          </>
         )}
 
         {/* ═══════════ MODÉRATION ═══════════ */}

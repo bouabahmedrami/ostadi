@@ -407,62 +407,6 @@ export async function getPlatformStats() {
 import { Message } from "./types";
 import { onSnapshot } from "firebase/firestore";
 
-export async function sendMessage(data: Omit<Message, "id">): Promise<string> {
-  const ref = await addDoc(collection(db, "messages"), {
-    ...data,
-    read: false,
-    createdAt: new Date().toISOString(),
-  });
-  await setDoc(doc(db, "chatRooms", data.classeId), {
-    classeId: data.classeId,
-    lastMessage: data.text,
-    lastMessageAt: new Date().toISOString(),
-    lastSenderId: data.senderId,
-  }, { merge: true });
-  return ref.id;
-}
-
-export function subscribeToMessages(
-  classeId: string,
-  callback: (messages: Message[]) => void
-) {
-  const q = query(
-    collection(db, "messages"),
-    where("classeId", "==", classeId),
-    orderBy("createdAt", "asc")
-  );
-  return onSnapshot(q, (snap) => {
-    const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Message));
-    callback(msgs);
-  });
-}
-
-export async function markMessagesAsRead(classeId: string, userId: string) {
-  const q = query(
-    collection(db, "messages"),
-    where("classeId", "==", classeId),
-    where("read", "==", false)
-  );
-  const snap = await getDocs(q);
-  const batch = writeBatch(db);
-  snap.docs.forEach(d => {
-    if (d.data().senderId !== userId) {
-      batch.update(d.ref, { read: true });
-    }
-  });
-  await batch.commit();
-}
-
-export async function getUnreadCount(classeId: string, userId: string): Promise<number> {
-  const q = query(
-    collection(db, "messages"),
-    where("classeId", "==", classeId),
-    where("read", "==", false)
-  );
-  const snap = await getDocs(q);
-  return snap.docs.filter(d => d.data().senderId !== userId).length;
-}
-
 export async function getUserChatRooms(userId: string, role: string): Promise<any[]> {
   let enrolledClasseIds: string[] = [];
 
@@ -713,6 +657,14 @@ export async function acceptEnrollmentRequest(
     await updateDoc(classeRef, {
       enrolledCount: (classeSnap.data().enrolledCount || 0) + 1,
     });
+  }
+
+  // 3bis. Donne accès aux messages déjà échangés dans ce cours.
+  // Sans ça, l'élève accepté ne verrait aucun message antérieur.
+  try {
+    await addParticipantToClasseMessages(request.classeId, request.studentId);
+  } catch (err) {
+    console.warn("Ajout aux messages existants échoué :", err);
   }
 
   // 4. Notifie l'élève
@@ -2092,4 +2044,431 @@ export async function getTeacherClassesStats(teacherId: string) {
       conversionRate: views > 0 ? Math.round((enrolled / views) * 100) : 0,
     };
   }).sort((a, b) => b.views - a.views);
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// PARTIE 1 — SIGNALEMENTS  (ajout simple, rien à supprimer)
+// ═══════════════════════════════════════════════════════════
+
+export type ReportCategory =
+  | "inappropriate"    // comportement déplacé
+  | "safety"           // sécurité d'un mineur — priorité absolue
+  | "fake"             // faux profil, diplôme suspect
+  | "payment"          // litige de paiement
+  | "quality"          // cours ne correspondant pas à l'annonce
+  | "other";
+
+export type ReportStatus = "open" | "reviewing" | "resolved" | "dismissed";
+
+export interface Report {
+  id: string;
+  category: ReportCategory;
+  targetType: "teacher" | "classe" | "message";
+  targetId: string;
+  targetName: string;
+  reporterId: string;
+  reporterName: string;
+  reporterRole: string;
+  description: string;
+  status: ReportStatus;
+  adminNote?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+/** Les signalements de sécurité passent devant tout le reste */
+export const URGENT_CATEGORIES: ReportCategory[] = ["safety", "inappropriate"];
+
+/**
+ * Enregistre un signalement.
+ *
+ * Volontairement simple à envoyer : un élève qui hésite à signaler
+ * ne le fera pas si le formulaire est long.
+ */
+export async function createReport(data: {
+  category: ReportCategory;
+  targetType: "teacher" | "classe" | "message";
+  targetId: string;
+  targetName: string;
+  reporterId: string;
+  reporterName: string;
+  reporterRole: string;
+  description: string;
+}): Promise<string> {
+  const now = new Date().toISOString();
+
+  const ref = await addDoc(collection(db, "reports"), {
+    ...data,
+    description: data.description.trim().slice(0, 1000),
+    status: "open" as ReportStatus,
+    createdAt: now,
+  });
+
+  // Alerte immédiate pour les cas sensibles
+  if (URGENT_CATEGORIES.includes(data.category)) {
+    try {
+      await addDoc(collection(db, "notifications"), {
+        userId: ADMIN_UID,
+        type: "message",
+        title: data.category === "safety"
+          ? "🚨 Signalement de sécurité"
+          : "⚠️ Comportement signalé",
+        body: `${data.reporterName} a signalé ${data.targetName}. À traiter en priorité.`,
+        link: "/admin",
+        read: false,
+        createdAt: now,
+      });
+    } catch (err) {
+      console.warn("Notification admin échouée :", err);
+    }
+  }
+
+  return ref.id;
+}
+
+/** Tous les signalements — urgents et ouverts en tête */
+export async function getAllReports(): Promise<Report[]> {
+  const snap = await getDocs(
+    query(collection(db, "reports"), orderBy("createdAt", "desc"))
+  );
+
+  const list = snap.docs.map(d => ({ id: d.id, ...d.data() } as Report));
+
+  const statusOrder: Record<ReportStatus, number> = {
+    open: 0, reviewing: 1, resolved: 2, dismissed: 3,
+  };
+
+  return list.sort((a, b) => {
+    if (statusOrder[a.status] !== statusOrder[b.status]) {
+      return statusOrder[a.status] - statusOrder[b.status];
+    }
+    const aUrgent = URGENT_CATEGORIES.includes(a.category) ? 0 : 1;
+    const bUrgent = URGENT_CATEGORIES.includes(b.category) ? 0 : 1;
+    if (aUrgent !== bUrgent) return aUrgent - bUrgent;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+}
+
+export async function updateReportStatus(
+  reportId: string,
+  status: ReportStatus,
+  adminNote?: string
+): Promise<void> {
+  const data: any = { status };
+  if (adminNote !== undefined) data.adminNote = adminNote.trim();
+  if (status === "resolved" || status === "dismissed") {
+    data.resolvedAt = new Date().toISOString();
+  }
+  await updateDoc(doc(db, "reports", reportId), data);
+}
+
+export async function hasReported(
+  reporterId: string,
+  targetId: string
+): Promise<boolean> {
+  const snap = await getDocs(
+    query(
+      collection(db, "reports"),
+      where("reporterId", "==", reporterId),
+      where("targetId", "==", targetId),
+      limit(1)
+    )
+  );
+  return !snap.empty;
+}
+
+export async function getOpenReportsCount(): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "reports"), where("status", "==", "open"))
+  );
+  return snap.size;
+}
+
+/**
+ * Suspend un compte.
+ *
+ * Ne supprime rien : le compte reste en base et les preuves avec.
+ * Les cours sont fermés pour retirer le professeur de la circulation.
+ */
+export async function suspendAccount(
+  userId: string,
+  reason: string
+): Promise<void> {
+  await updateDoc(doc(db, "users", userId), {
+    suspended: true,
+    suspendedAt: new Date().toISOString(),
+    suspensionReason: reason,
+  });
+
+  const classesSnap = await getDocs(
+    query(collection(db, "classes"), where("teacherId", "==", userId))
+  );
+  if (!classesSnap.empty) {
+    const batch = writeBatch(db);
+    classesSnap.docs.forEach(d => batch.update(d.ref, { status: "ended" }));
+    await batch.commit();
+  }
+}
+
+export async function unsuspendAccount(userId: string): Promise<void> {
+  await updateDoc(doc(db, "users", userId), {
+    suspended: false,
+    suspendedAt: null,
+    suspensionReason: null,
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// PARTIE 2 — SÉCURITÉ DES MESSAGES
+// ═══════════════════════════════════════════════════════════
+//
+// ⚠️ SUPPRIME d'abord ces 4 fonctions existantes dans ton fichier :
+//    • sendMessage
+//    • subscribeToMessages
+//    • markMessagesAsRead
+//    • getUnreadCount
+//
+//    Elles sont remplacées ci-dessous.
+//
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Calcule les participants d'une conversation.
+ * Le professeur, plus tous les élèves inscrits au cours.
+ */
+async function getClasseParticipants(classeId: string): Promise<string[]> {
+  const [classeSnap, enrollSnap] = await Promise.all([
+    getDoc(doc(db, "classes", classeId)),
+    getDocs(query(collection(db, "enrollments"), where("classeId", "==", classeId))),
+  ]);
+
+  if (!classeSnap.exists()) return [];
+
+  const teacherId = (classeSnap.data() as any).teacherId as string;
+  const studentIds = enrollSnap.docs
+    .map(d => (d.data() as any).studentId)
+    .filter(Boolean);
+
+  return [...new Set([teacherId, ...studentIds])];
+}
+
+/**
+ * Envoie un message.
+ *
+ * Le champ `participants` est ce qui permet à la règle Firestore de
+ * n'autoriser la lecture qu'aux personnes concernées. Sans lui,
+ * n'importe quel utilisateur connecté peut lire toutes les
+ * conversations de la plateforme via l'API.
+ */
+export async function sendMessage(data: Omit<Message, "id">): Promise<string> {
+  const now = new Date().toISOString();
+
+  const participants = await getClasseParticipants(data.classeId);
+
+  // L'expéditeur doit faire partie de la conversation
+  if (participants.length > 0 && !participants.includes(data.senderId)) {
+    throw new Error("not-a-participant");
+  }
+
+  const ref = await addDoc(collection(db, "messages"), {
+    ...data,
+    participants,
+    read: false,
+    createdAt: now,
+  });
+
+  // Aperçu de la conversation — conservé de la version précédente
+  await setDoc(doc(db, "chatRooms", data.classeId), {
+    classeId: data.classeId,
+    lastMessage: data.text,
+    lastMessageAt: now,
+    lastSenderId: data.senderId,
+  }, { merge: true });
+
+  return ref.id;
+}
+
+/**
+ * Écoute les messages d'une conversation.
+ *
+ * ⚠️ La requête filtre sur `participants`, pas seulement sur `classeId`.
+ *
+ * Firestore évalue les règles document par document : si une requête
+ * renvoie un seul document que l'utilisateur n'a pas le droit de lire,
+ * TOUTE la requête échoue. Un élève inscrit tardivement n'apparaît pas
+ * dans les participants des messages antérieurs — filtrer par classeId
+ * seul ferait donc échouer son chargement.
+ */
+export function subscribeToMessages(
+  classeId: string,
+  userId: string,
+  callback: (messages: Message[]) => void,
+  onError?: (err: any) => void
+) {
+  const q = query(
+    collection(db, "messages"),
+    where("classeId", "==", classeId),
+    where("participants", "array-contains", userId),
+    orderBy("createdAt", "asc")
+  );
+
+  return onSnapshot(
+    q,
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() } as Message))),
+    err => {
+      console.error("Écoute des messages échouée :", err);
+      onError?.(err);
+    }
+  );
+}
+
+export async function markMessagesAsRead(classeId: string, userId: string) {
+  const snap = await getDocs(
+    query(
+      collection(db, "messages"),
+      where("classeId", "==", classeId),
+      where("participants", "array-contains", userId),
+      where("read", "==", false)
+    )
+  );
+
+  if (snap.empty) return;
+
+  const batch = writeBatch(db);
+  let count = 0;
+  snap.docs.forEach(d => {
+    if ((d.data() as any).senderId !== userId) {
+      batch.update(d.ref, { read: true });
+      count++;
+    }
+  });
+  if (count > 0) await batch.commit();
+}
+
+export async function getUnreadCount(classeId: string, userId: string): Promise<number> {
+  const snap = await getDocs(
+    query(
+      collection(db, "messages"),
+      where("classeId", "==", classeId),
+      where("participants", "array-contains", userId),
+      where("read", "==", false)
+    )
+  );
+  return snap.docs.filter(d => (d.data() as any).senderId !== userId).length;
+}
+
+/**
+ * Ajoute un élève aux participants des messages existants d'un cours.
+ *
+ * Sans ça, un élève inscrit après le début de la conversation ne verrait
+ * aucun message antérieur. À appeler depuis acceptEnrollmentRequest.
+ */
+export async function addParticipantToClasseMessages(
+  classeId: string,
+  userId: string
+): Promise<void> {
+  const snap = await getDocs(
+    query(collection(db, "messages"), where("classeId", "==", classeId))
+  );
+  if (snap.empty) return;
+
+  const docs = snap.docs.filter(d => {
+    const p = (d.data() as any).participants;
+    return Array.isArray(p) && !p.includes(userId);
+  });
+
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 400).forEach(d => {
+      const p = (d.data() as any).participants || [];
+      batch.update(d.ref, { participants: [...p, userId] });
+    });
+    await batch.commit();
+  }
+}
+
+/**
+ * MIGRATION — ajoute `participants` aux messages qui n'en ont pas.
+ *
+ * À lancer UNE FOIS depuis le panneau admin, AVANT de déployer la
+ * nouvelle règle Firestore. Sans ça, les anciens messages deviennent
+ * illisibles pour tout le monde sauf l'administrateur.
+ */
+export async function migrateMessagesParticipants(): Promise<{
+  total: number;
+  migrated: number;
+  skipped: number;
+}> {
+  const messagesSnap = await getDocs(collection(db, "messages"));
+  const total = messagesSnap.size;
+  if (total === 0) return { total: 0, migrated: 0, skipped: 0 };
+
+  const [classesSnap, enrollSnap] = await Promise.all([
+    getDocs(collection(db, "classes")),
+    getDocs(collection(db, "enrollments")),
+  ]);
+
+  const teacherByClasse = new Map<string, string>();
+  classesSnap.docs.forEach(d => {
+    teacherByClasse.set(d.id, (d.data() as any).teacherId);
+  });
+
+  const studentsByClasse = new Map<string, string[]>();
+  enrollSnap.docs.forEach(d => {
+    const e = d.data() as any;
+    if (!e.classeId || !e.studentId) return;
+    const arr = studentsByClasse.get(e.classeId) || [];
+    arr.push(e.studentId);
+    studentsByClasse.set(e.classeId, arr);
+  });
+
+  const participantsByClasse = new Map<string, string[]>();
+  for (const [classeId, teacherId] of teacherByClasse) {
+    participantsByClasse.set(classeId, [
+      ...new Set([teacherId, ...(studentsByClasse.get(classeId) || [])]),
+    ]);
+  }
+
+  let migrated = 0;
+  let skipped = 0;
+
+  const docs = messagesSnap.docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = writeBatch(db);
+    let inBatch = 0;
+
+    docs.slice(i, i + 400).forEach(d => {
+      const m = d.data() as any;
+
+      if (Array.isArray(m.participants) && m.participants.length > 0) {
+        skipped++;
+        return;
+      }
+
+      const participants = participantsByClasse.get(m.classeId);
+
+      if (!participants || participants.length === 0) {
+        // Cours supprimé : on garde au moins l'expéditeur, sinon
+        // le message devient inaccessible même à son auteur
+        if (m.senderId) {
+          batch.update(d.ref, { participants: [m.senderId] });
+          inBatch++;
+          migrated++;
+        } else {
+          skipped++;
+        }
+        return;
+      }
+
+      batch.update(d.ref, { participants });
+      inBatch++;
+      migrated++;
+    });
+
+    if (inBatch > 0) await batch.commit();
+  }
+
+  return { total, migrated, skipped };
 }

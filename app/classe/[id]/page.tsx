@@ -15,6 +15,8 @@ import { StarDisplay } from "@/components/StarRating";
 import LiveKitVideoRoom from "@/components/LiveKitVideoRoom";
 import RatingModal from "@/components/RatingModal";
 import CourseMaterials from "@/components/CourseMaterials";
+import ReportButton from "@/components/ReportButton";
+import ShareCourse from "@/components/ShareCourse";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -257,6 +259,16 @@ export default function ClassePage() {
                 {classe.description}
               </p>
             )}
+
+            {/* ═══ PARTAGE ═══
+                Un professeur qui promeut son cours n'avait qu'un lien nu.
+                Une image se partage bien mieux sur Facebook et WhatsApp. */}
+            <div style={{
+              marginTop: '18px', paddingTop: '16px',
+              borderTop: '1px solid rgba(124,58,237,0.15)',
+            }}>
+              <ShareCourse classe={classe} teacherName={classe.teacherName} />
+            </div>
           </div>
 
           {/* ═══ VIDEO ROOM (inscrits + prof) ═══ */}
@@ -596,6 +608,17 @@ export default function ClassePage() {
                 </div>
               </div>
             </div>
+          </div>
+          {/* ═══ SIGNALEMENT ═══ */}
+          <div style={{
+            textAlign: 'center', marginTop: '10px', paddingTop: '18px',
+            borderTop: '1px solid rgba(124,58,237,0.12)',
+          }}>
+            <ReportButton
+              targetType="classe"
+              targetId={classe.id}
+              targetName={classe.title}
+            />
           </div>
         </div>
       </div>

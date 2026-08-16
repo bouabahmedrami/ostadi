@@ -115,12 +115,29 @@ service cloud.firestore {
 
     // ── Messages (chat) ───────────────────────────────────
     match /messages/{messageId} {
-      allow read: if isAdmin() || isAuth();
+      // ⚠️ Lecture réservée aux PARTICIPANTS de la conversation.
+      //
+      // L'ancienne règle — `allow read: if isAuth()` — laissait
+      // n'importe quel utilisateur connecté lire toutes les
+      // conversations de la plateforme via l'API, depuis la console
+      // de son navigateur. Sur une plateforme où des adultes
+      // échangent avec des mineurs, ce n'était pas acceptable.
+      allow read: if isAdmin()
+        || (isAuth() && request.auth.uid in resource.data.participants);
+
       allow create: if isAuth()
         && request.resource.data.senderId == request.auth.uid
+        && request.auth.uid in request.resource.data.participants
         && request.resource.data.text.size() > 0
         && request.resource.data.text.size() <= 1000;
-      allow update: if isAuth();
+
+      // Marquage comme lu, et ajout d'un participant lors d'une
+      // inscription tardive
+      allow update: if isAdmin()
+        || (isAuth() && request.auth.uid in resource.data.participants)
+        || (isTeacher() && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(['participants']));
+
       allow delete: if isAdmin();
     }
 
@@ -194,6 +211,16 @@ service cloud.firestore {
     // deux fois le même professeur dans la semaine.
     match /paymentReminders/{reminderId} {
       allow read, write: if isAdmin();
+    }
+
+    // ── Signalements ──────────────────────────────────────
+    // L'auteur suit son propre signalement, l'administrateur voit tout.
+    match /reports/{reportId} {
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.reporterId == request.auth.uid);
+      allow create: if isAuth()
+        && request.resource.data.reporterId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     // ── Marqueurs de rappel ───────────────────────────────

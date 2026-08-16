@@ -27,6 +27,10 @@ export interface UserProfile {
   cguVersion?: string;           // version acceptée, ex: "1.0"
   // Disponibilités — format ["sun-evening", "fri-morning", ...]
   availability?: string[];
+  /** Compte suspendu suite à un signalement — réversible */
+  suspended?: boolean;
+  suspendedAt?: string | null;
+  suspensionReason?: string | null;
 }
 
 export interface Classe {
@@ -165,6 +169,8 @@ export interface AdminUser {
 export interface Message {
   id: string;
   classeId: string;
+  /** UID du professeur et des élèves inscrits — base de la règle de lecture */
+  participants?: string[];
   senderId: string;
   senderName: string;
   senderRole: "teacher" | "student";

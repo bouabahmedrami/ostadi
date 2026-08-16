@@ -10,6 +10,7 @@ import {
 } from "@/lib/firestore";
 import { Message, Classe } from "@/lib/types";
 import { Send, ArrowLeft, BookOpen, Video, MessageSquare } from "lucide-react";
+import ReportButton from "@/components/ReportButton";
 import Link from "next/link";
 
 /* ── Bulle de message ───────────────────────────────────── */
@@ -62,23 +63,60 @@ export default function ChatPage() {
     loadClasse();
   }, [user]);
 
+  /**
+   * Écoute des messages.
+   *
+   * ⚠️ La fonction prend maintenant l'identifiant de l'utilisateur :
+   * la requête filtre sur `participants`, pas seulement sur `classeId`.
+   *
+   * Firestore évalue ses règles document par document — si une requête
+   * renvoie un seul document interdit, elle échoue entièrement. Un élève
+   * inscrit tardivement n'apparaît pas dans les participants des messages
+   * antérieurs ; sans ce filtre, sa page afficherait une erreur au lieu
+   * de la conversation.
+   */
   useEffect(() => {
     if (!classeId || !user) return;
-    const unsub = subscribeToMessages(classeId as string, (msgs) => {
-      setMessages(msgs);
-      setLoading(false);
-      markMessagesAsRead(classeId as string, user.uid);
-    });
+
+    const unsub = subscribeToMessages(
+      classeId as string,
+      user.uid,
+      (msgs) => {
+        setMessages(msgs);
+        setLoading(false);
+        setError(null);
+        markMessagesAsRead(classeId as string, user.uid).catch(err =>
+          console.warn("Marquage comme lu échoué :", err)
+        );
+      },
+      (err) => {
+        setLoading(false);
+        setError(
+          err?.code === "failed-precondition"
+            ? (isRTL
+                ? "الفهرس مفقود — افتح الرابط في الطرفية."
+                : "Index Firestore manquant — voir le lien dans le terminal.")
+            : (isRTL
+                ? "تعذّر تحميل الرسائل."
+                : "Impossible de charger les messages.")
+        );
+      }
+    );
+
     return () => unsub();
-  }, [classeId, user]);
+  }, [classeId, user, isRTL]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   async function loadClasse() {
-    const c = await getClasseById(classeId as string);
-    setClasse(c);
+    try {
+      const c = await getClasseById(classeId as string);
+      setClasse(c);
+    } catch (err) {
+      console.error("Chargement du cours échoué :", err);
+    }
   }
 
   /* ── Envoi avec gestion d'erreur ──────────────────────── */
@@ -99,12 +137,17 @@ export default function ChatPage() {
         createdAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      // ⚠️ AVANT : l'erreur était avalée et le message perdu
-      console.error("Envoi échoué:", err);
+      console.error("Envoi échoué :", err);
       setText(msgText); // restaure le texte pour ne pas le perdre
-      setError(isRTL
-        ? "فشل إرسال الرسالة. تحقق من اتصالك."
-        : "Échec de l'envoi. Vérifiez votre connexion.");
+      setError(
+        err?.message === "not-a-participant"
+          ? (isRTL
+              ? "لست مشاركاً في هذه المحادثة."
+              : "Vous ne faites pas partie de cette conversation.")
+          : (isRTL
+              ? "فشل إرسال الرسالة. تحقق من اتصالك."
+              : "Échec de l'envoi. Vérifiez votre connexion.")
+      );
     } finally {
       setSending(false);
       inputRef.current?.focus();
@@ -175,6 +218,18 @@ export default function ChatPage() {
             </p>
           )}
         </div>
+
+        {/* Signalement — discret, mais toujours accessible.
+            Une conversation est l'endroit où un comportement déplacé
+            se manifeste en premier. */}
+        {classe && (
+          <ReportButton
+            targetType="message"
+            targetId={classeId as string}
+            targetName={classe.title}
+            compact
+          />
+        )}
 
         {classe && (
           <Link href={`/classe/${classe.id}`} className="ch-course-btn">
