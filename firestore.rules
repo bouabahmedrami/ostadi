@@ -213,6 +213,19 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Liste d'attente ───────────────────────────────────
+    // Un cours complet ne doit pas faire perdre l'élève :
+    // il s'inscrit ici et sera prévenu si une place se libère.
+    match /waitlist/{entryId} {
+      allow read: if isAuth();
+      allow create: if isAuth()
+        && request.resource.data.studentId == request.auth.uid;
+      // Le professeur marque les personnes prévenues
+      allow update: if isAdmin() || isTeacher();
+      allow delete: if isAdmin()
+        || (isAuth() && resource.data.studentId == request.auth.uid);
+    }
+
     // ── Signalements ──────────────────────────────────────
     // L'auteur suit son propre signalement, l'administrateur voit tout.
     match /reports/{reportId} {

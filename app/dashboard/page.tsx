@@ -18,6 +18,7 @@ import SessionsPicker from "@/components/SessionsPicker";
 import DuplicateClasseModal from "@/components/DuplicateClasseModal";
 import ClasseStats from "@/components/ClasseStats";
 import StudentPayments from "@/components/StudentPayments";
+import ResponseBadge from "@/components/ResponseBadge";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   return (
@@ -52,6 +53,7 @@ export default function DashboardPage() {
     title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "",
     durationMinutes: 60, price: 500, priceType: "session" as "session" | "monthly",
     description: "", whatsapp: "", wilaya: "Alger",
+    maxStudents: undefined as number | undefined,
   });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -115,6 +117,8 @@ export default function DashboardPage() {
         // Firestore rejette `undefined` : on omet le champ au lieu
         // de l'envoyer vide pour les cours à la séance
         ...(isMonthly ? { sessions } : {}),
+        // Firestore rejette undefined — on omet le champ s'il est vide
+        ...(form.maxStudents ? { maxStudents: form.maxStudents } : {}),
         teacherId: user!.uid,
         teacherName: profile!.displayName,
         // Photo dupliquée ici pour éviter une lecture Firestore
@@ -130,7 +134,7 @@ export default function DashboardPage() {
         createdAt: new Date().toISOString(),
       });
       setShowCreateModal(false);
-      setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger" });
+      setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger", maxStudents: undefined });
       setSessions([]);
       await loadData();
     } catch (err: any) {
@@ -299,7 +303,15 @@ export default function DashboardPage() {
 
         {/* ═══ TAB: COURS ═══ */}
         {activeTab === "cours" && (
-          <>{user && <EnrollmentRequestsPanel teacherId={user.uid} />}
+          <>
+            {/* Réactivité — le professeur voit son propre score.
+                C'est ce qui change le comportement, pas le chiffre. */}
+            {user && (
+              <div style={{ marginBottom: '16px' }}>
+                <ResponseBadge teacherId={user.uid} variant="self" />
+              </div>
+            )}
+            {user && <EnrollmentRequestsPanel teacherId={user.uid} />}
             {classes.length === 0 ? (
               <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '48px', textAlign: 'center' }}>
                 <BookOpen style={{ width: '40px', height: '40px', color: '#4c1d95', margin: '0 auto 12px', opacity: 0.5 }} />
@@ -495,9 +507,27 @@ export default function DashboardPage() {
                 </div>
               )}
 
-              <div>
-                <label style={labelStyle}>WhatsApp</label>
-                <input style={inputStyle} placeholder="213XXXXXXXXX" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>WhatsApp</label>
+                  <input style={inputStyle} placeholder="213XXXXXXXXX" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={labelStyle}>
+                    {isRTL ? "عدد المقاعد" : "Places disponibles"}
+                  </label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    placeholder={isRTL ? "بدون حد" : "Sans limite"}
+                    value={form.maxStudents ?? ""}
+                    onChange={e => setForm(f => ({
+                      ...f,
+                      maxStudents: e.target.value ? Number(e.target.value) : undefined,
+                    }))}
+                  />
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Description</label>

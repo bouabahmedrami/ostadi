@@ -4,7 +4,7 @@ import { useLang } from "@/lib/lang-context";
 import {
   FileText, ArrowLeft, Shield, Banknote, GraduationCap,
   AlertTriangle, Scale, UserCheck, Lock, ChevronDown,
-} from "lucide-react";
+ CalendarX } from "lucide-react";
 import Link from "next/link";
 
 export const CGU_VERSION = "1.0";
@@ -95,9 +95,29 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    id: "annulation",
+    icon: <CalendarX size={17} />,
+    titleFr: "5. Annulations et reports",
+    titleAr: "5. الإلغاء والتأجيل",
+    contentFr: [
+      "Lorsqu'un professeur annule une séance, il doit rembourser intégralement l'élève ou lui proposer une séance de remplacement, acceptée par ce dernier. Les annulations répétées sans motif légitime peuvent entraîner la suspension du compte.",
+      "Lorsqu'un élève annule plus de 24 heures avant le début de la séance, il peut prétendre au remboursement intégral. En deçà de 24 heures, le remboursement relève de l'appréciation du professeur. Une absence non signalée ne donne droit à aucun remboursement.",
+      "En cas de défaillance technique de la salle vidéo, imputable à l'une ou l'autre partie, la séance est reportée sans frais supplémentaires. Le problème doit être signalé le jour même via la messagerie du cours.",
+      "Pour un abonnement mensuel, toute séance manquée par le professeur doit être rattrapée. Une séance manquée par l'élève n'est pas remboursée, mais les supports déposés restent accessibles.",
+      "Ostadi ne détenant pas les sommes versées, elle ne procède à aucun remboursement direct. Elle intervient en qualité d'arbitre en cas de litige et peut suspendre un compte ne respectant pas les présentes règles.",
+    ],
+    contentAr: [
+      "عندما يلغي الأستاذ حصة، عليه إرجاع المبلغ كاملاً للطالب أو اقتراح حصة تعويضية يقبلها هذا الأخير. الإلغاء المتكرّر دون سبب مشروع قد يؤدّي إلى تعليق الحساب.",
+      "إذا ألغى الطالب قبل أكثر من 24 ساعة من بداية الحصة، يحقّ له استرجاع كامل المبلغ. أقل من 24 ساعة، يبقى الاسترجاع من تقدير الأستاذ. الغياب دون إعلام لا يمنح أيّ حق في الاسترجاع.",
+      "في حال عطل تقني في قاعة الفيديو، من أيّ طرف كان، تُؤجَّل الحصة دون تكلفة إضافية. يجب الإبلاغ عن المشكل في نفس اليوم عبر محادثة الدرس.",
+      "بالنسبة للاشتراك الشهري، كلّ حصة يفوّتها الأستاذ يجب تعويضها. الحصة التي يفوّتها الطالب لا تُسترجَع، لكن تبقى الوثائق المرفوعة متاحة له.",
+      "بما أن أستاذي لا تحتفظ بالمبالغ المدفوعة، فهي لا تقوم بأيّ استرجاع مباشر. تتدخّل بصفة محكّم عند النزاع، ويمكنها تعليق حساب لا يحترم هذه القواعد.",
+    ],
+  },
+  {
     id: "verification",
     icon: <UserCheck size={17} />,
-    titleFr: "5. Vérification et badge",
+    titleFr: "6. Vérification et badge",
     titleAr: "5. التوثيق والشارة",
     contentFr: [
       "Ostadi propose une procédure de vérification facultative permettant d'obtenir un badge « Profil vérifié ».",
@@ -115,7 +135,7 @@ const SECTIONS: Section[] = [
   {
     id: "donnees",
     icon: <Lock size={17} />,
-    titleFr: "6. Données personnelles",
+    titleFr: "7. Données personnelles",
     titleAr: "6. المعطيات الشخصية",
     contentFr: [
       "Les données collectées (identité, coordonnées, wilaya, documents de vérification) sont utilisées uniquement pour le fonctionnement du service et ne sont ni vendues ni cédées à des tiers commerciaux.",
@@ -133,8 +153,8 @@ const SECTIONS: Section[] = [
   {
     id: "interdits",
     icon: <AlertTriangle size={17} />,
-    titleFr: "7. Comportements interdits",
-    titleAr: "7. السلوكيات الممنوعة",
+    titleFr: "8. Comportements interdits",
+    titleAr: "8. السلوكيات الممنوعة",
     contentFr: [
       "Créer un compte sous une fausse identité ou usurper l'identité d'autrui.",
       "Publier un contenu illicite, diffamatoire, haineux, violent ou contraire aux bonnes mœurs.",
@@ -155,8 +175,8 @@ const SECTIONS: Section[] = [
   {
     id: "responsabilite",
     icon: <Scale size={17} />,
-    titleFr: "8. Responsabilité et litiges",
-    titleAr: "8. المسؤولية والنزاعات",
+    titleFr: "9. Responsabilité et litiges",
+    titleAr: "9. المسؤولية والنزاعات",
     contentFr: [
       "Ostadi met en œuvre les moyens raisonnables pour assurer la disponibilité du service, sans garantie d'un fonctionnement ininterrompu ou exempt d'erreurs.",
       "La responsabilité d'Ostadi ne saurait être engagée en cas de litige entre un professeur et un élève, de défaut de paiement, de qualité insuffisante d'un cours, ou d'interruption technique liée à un tiers (opérateur, hébergeur, fournisseur de visioconférence).",

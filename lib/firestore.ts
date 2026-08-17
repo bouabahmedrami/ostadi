@@ -2472,3 +2472,281 @@ export async function migrateMessagesParticipants(): Promise<{
 
   return { total, migrated, skipped };
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// DÉLAI DE RÉPONSE · LISTE D'ATTENTE
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. DÉLAI DE RÉPONSE DU PROFESSEUR
+// ═══════════════════════════════════════════════════════════
+
+export interface ResponseStats {
+  /** Délai médian en minutes, null si aucune donnée */
+  medianMinutes: number | null;
+  /** Nombre de demandes prises en compte */
+  sampleSize: number;
+  /** Part des demandes traitées (acceptées ou refusées) */
+  responseRate: number;
+  /** Libellé prêt à afficher */
+  label: { fr: string; ar: string } | null;
+}
+
+/**
+ * Calcule le délai de réponse d'un professeur.
+ *
+ * On prend la MÉDIANE, pas la moyenne : un professeur qui répond
+ * habituellement en 20 minutes mais a laissé traîner une demande
+ * trois semaines afficherait une moyenne absurde. La médiane
+ * reflète son comportement réel.
+ *
+ * Les demandes encore en attente comptent dans le taux de réponse
+ * mais pas dans le délai — sinon un professeur qui ignore tout
+ * aurait un excellent score.
+ */
+export async function getTeacherResponseStats(
+  teacherId: string
+): Promise<ResponseStats> {
+  const snap = await getDocs(
+    query(collection(db, "enrollmentRequests"), where("teacherId", "==", teacherId))
+  );
+
+  if (snap.empty) {
+    return { medianMinutes: null, sampleSize: 0, responseRate: 0, label: null };
+  }
+
+  const all = snap.docs.map(d => d.data() as any);
+  const answered = all.filter(r => r.reviewedAt && r.createdAt);
+
+  const responseRate = Math.round((answered.length / all.length) * 100);
+
+  if (answered.length === 0) {
+    return { medianMinutes: null, sampleSize: 0, responseRate, label: null };
+  }
+
+  const delays = answered
+    .map(r => {
+      const ms = new Date(r.reviewedAt).getTime() - new Date(r.createdAt).getTime();
+      return ms / 60_000;
+    })
+    .filter(m => m >= 0)
+    .sort((a, b) => a - b);
+
+  if (delays.length === 0) {
+    return { medianMinutes: null, sampleSize: 0, responseRate, label: null };
+  }
+
+  const mid = Math.floor(delays.length / 2);
+  const median = delays.length % 2 === 0
+    ? (delays[mid - 1] + delays[mid]) / 2
+    : delays[mid];
+
+  return {
+    medianMinutes: Math.round(median),
+    sampleSize: delays.length,
+    responseRate,
+    label: formatResponseDelay(median),
+  };
+}
+
+/** Transforme un délai en minutes en libellé lisible */
+export function formatResponseDelay(minutes: number): { fr: string; ar: string } {
+  if (minutes < 60) {
+    return {
+      fr: `Répond en moins d'une heure`,
+      ar: `يردّ في أقل من ساعة`,
+    };
+  }
+  if (minutes < 60 * 6) {
+    const h = Math.round(minutes / 60);
+    return {
+      fr: `Répond en ${h} h environ`,
+      ar: `يردّ خلال ${h} ساعات تقريباً`,
+    };
+  }
+  if (minutes < 60 * 24) {
+    return {
+      fr: `Répond dans la journée`,
+      ar: `يردّ في نفس اليوم`,
+    };
+  }
+  const days = Math.round(minutes / (60 * 24));
+  if (days <= 3) {
+    return {
+      fr: `Répond en ${days} jour${days > 1 ? "s" : ""}`,
+      ar: `يردّ خلال ${days} ${days > 1 ? "أيام" : "يوم"}`,
+    };
+  }
+  return {
+    fr: `Répond sous quelques jours`,
+    ar: `يردّ خلال بضعة أيام`,
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. LISTE D'ATTENTE
+// ═══════════════════════════════════════════════════════════
+
+export interface WaitlistEntry {
+  id: string;
+  classeId: string;
+  classeTitle: string;
+  teacherId: string;
+  studentId: string;
+  studentName: string;
+  studentPhone: string;
+  /** Position dans la file, calculée à l'affichage */
+  position?: number;
+  notified: boolean;
+  createdAt: string;
+}
+
+/** Le cours est-il complet ? */
+export function isClasseFull(classe: { maxStudents?: number; enrolledCount: number }): boolean {
+  if (!classe.maxStudents || classe.maxStudents <= 0) return false;
+  return classe.enrolledCount >= classe.maxStudents;
+}
+
+/**
+ * Inscrit un élève sur la liste d'attente.
+ *
+ * Sans ça, un élève qui trouve un cours complet repart et ne revient
+ * jamais. Avec, il reste dans la boucle — et le professeur sait qu'il
+ * y a de la demande pour reconduire son cours.
+ */
+export async function joinWaitlist(data: {
+  classeId: string;
+  classeTitle: string;
+  teacherId: string;
+  studentId: string;
+  studentName: string;
+  studentPhone: string;
+}): Promise<string> {
+  // Déjà inscrit ?
+  const existing = await getDocs(
+    query(
+      collection(db, "waitlist"),
+      where("classeId", "==", data.classeId),
+      where("studentId", "==", data.studentId),
+      limit(1)
+    )
+  );
+  if (!existing.empty) return existing.docs[0].id;
+
+  const now = new Date().toISOString();
+
+  const ref = await addDoc(collection(db, "waitlist"), {
+    ...data,
+    notified: false,
+    createdAt: now,
+  });
+
+  // Le professeur voit la demande latente — utile pour décider
+  // de reconduire le cours ou d'augmenter la capacité
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: data.teacherId,
+      type: "message",
+      title: "📋 Nouvelle inscription en attente",
+      body: `${data.studentName} s'est inscrit sur la liste d'attente de « ${data.classeTitle} ».`,
+      link: "/dashboard",
+      read: false,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn("Notification liste d'attente échouée :", err);
+  }
+
+  return ref.id;
+}
+
+/** Retire un élève de la liste d'attente */
+export async function leaveWaitlist(classeId: string, studentId: string): Promise<void> {
+  const snap = await getDocs(
+    query(
+      collection(db, "waitlist"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId)
+    )
+  );
+  const batch = writeBatch(db);
+  snap.docs.forEach(d => batch.delete(d.ref));
+  if (!snap.empty) await batch.commit();
+}
+
+/** L'élève est-il sur la liste d'attente ? Avec sa position */
+export async function getMyWaitlistEntry(
+  classeId: string,
+  studentId: string
+): Promise<WaitlistEntry | null> {
+  const snap = await getDocs(
+    query(collection(db, "waitlist"), where("classeId", "==", classeId))
+  );
+  if (snap.empty) return null;
+
+  const list = snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as WaitlistEntry))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+  const idx = list.findIndex(e => e.studentId === studentId);
+  if (idx === -1) return null;
+
+  return { ...list[idx], position: idx + 1 };
+}
+
+/** Liste d'attente complète d'un cours, dans l'ordre d'arrivée */
+export async function getClasseWaitlist(classeId: string): Promise<WaitlistEntry[]> {
+  const snap = await getDocs(
+    query(collection(db, "waitlist"), where("classeId", "==", classeId))
+  );
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as WaitlistEntry))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .map((e, i) => ({ ...e, position: i + 1 }));
+}
+
+/**
+ * Prévient les personnes en attente qu'une place s'est libérée.
+ *
+ * Appelé quand un cours passe sous sa capacité maximale.
+ * Ne prévient que les premiers de la file, pas tout le monde :
+ * inutile d'alerter dix personnes pour une seule place.
+ */
+export async function notifyWaitlist(
+  classeId: string,
+  spotsAvailable: number = 1
+): Promise<number> {
+  const list = await getClasseWaitlist(classeId);
+  const toNotify = list.filter(e => !e.notified).slice(0, spotsAvailable);
+
+  if (toNotify.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  const batch = writeBatch(db);
+
+  toNotify.forEach(e => {
+    batch.set(doc(collection(db, "notifications")), {
+      userId: e.studentId,
+      type: "message",
+      title: "🎉 Une place s'est libérée !",
+      body: `Une place vient de se libérer dans « ${e.classeTitle} ». Envoyez vite votre demande.`,
+      link: `/classe/${classeId}`,
+      read: false,
+      createdAt: now,
+    });
+    batch.update(doc(db, "waitlist", e.id), { notified: true });
+  });
+
+  await batch.commit();
+  return toNotify.length;
+}
+
+/** Nombre de personnes en attente sur les cours d'un professeur */
+export async function getTeacherWaitlistCount(teacherId: string): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "waitlist"), where("teacherId", "==", teacherId))
+  );
+  return snap.size;
+}

@@ -1,0 +1,54 @@
+{
+  "name": "Ostadi — أستاذي",
+  "short_name": "Ostadi",
+  "description": "Cours de soutien en ligne en Algérie — Bac, BEM et tous les niveaux. Professeurs vérifiés dans les 58 wilayas.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A0014",
+  "theme_color": "#0A0014",
+  "lang": "fr",
+  "dir": "auto",
+  "categories": ["education"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Mes cours",
+      "short_name": "Cours",
+      "url": "/mes-cours",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Messages",
+      "short_name": "Chat",
+      "url": "/chat",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Rechercher un cours",
+      "short_name": "Recherche",
+      "url": "/recherche",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

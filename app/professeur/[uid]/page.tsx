@@ -14,6 +14,8 @@ import ClasseCard from "@/components/ClasseCard";
 import Avatar from "@/components/Avatar";
 import { AvailabilityDisplay } from "@/components/Availability";
 import ReportButton from "@/components/ReportButton";
+import TeacherVideo from "@/components/TeacherVideo";
+import ResponseBadge from "@/components/ResponseBadge";
 import {
   MapPin, BookOpen, Users, Star,
   ArrowLeft, Clock, ShieldCheck, GraduationCap, Briefcase,
@@ -126,6 +128,8 @@ export default function TeacherProfilePage() {
                     <ShieldCheck size={11} /> {isRTL ? "موثق" : "Vérifié"}
                   </span>
                 )}
+                {/* Réactivité — rassure avant même l'envoi de la demande */}
+                <ResponseBadge teacherId={uid as string} />
               </div>
 
               <div className="tp-meta">
@@ -200,6 +204,14 @@ export default function TeacherProfilePage() {
         {/* ═══ COURS ═══ */}
         {tab === "courses" && (
           <>
+            {/* Vidéo de présentation — le meilleur outil de conversion.
+                Le champ était collecté à la vérification sans jamais
+                être affiché. */}
+            <TeacherVideo
+              url={(teacher as any).demoVideoURL}
+              teacherName={teacher.displayName}
+            />
+
             {(teacher as any).availability?.length > 0 && (
               <div style={{ marginBottom: '18px' }}>
                 <AvailabilityDisplay value={(teacher as any).availability} />

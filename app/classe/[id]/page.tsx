@@ -5,7 +5,7 @@ import {
   getClasseById, getEnrollmentsByStudent, markAttendance,
   getRatingByStudentAndClasse, updateClasse, createNotification,
   getEnrollmentsByClasse, createEnrollmentRequest, getMyRequestForClasse,
-  trackClasseView,
+  trackClasseView, isClasseFull,
 } from "@/lib/firestore";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
@@ -17,6 +17,8 @@ import RatingModal from "@/components/RatingModal";
 import CourseMaterials from "@/components/CourseMaterials";
 import ReportButton from "@/components/ReportButton";
 import ShareCourse from "@/components/ShareCourse";
+import CancellationPolicy from "@/components/CancellationPolicy";
+import WaitlistButton from "@/components/WaitlistButton";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -432,8 +434,14 @@ export default function ClassePage() {
                 </div>
               )}
 
-              {/* ÉTAT 3 : Aucune demande → formulaire */}
-              {!myRequest && (
+              {/* ÉTAT 3a : Cours complet → liste d'attente.
+                  Sans elle, l'élève repart et ne revient jamais. */}
+              {!myRequest && isClasseFull(classe) && (
+                <WaitlistButton classe={classe} />
+              )}
+
+              {/* ÉTAT 3b : Places disponibles → formulaire */}
+              {!myRequest && !isClasseFull(classe) && (
                 <div className="ostadi-card" style={{
                   background: 'linear-gradient(135deg, rgba(255,140,0,0.06), rgba(124,58,237,0.04))',
                   border: '1px solid rgba(255,140,0,0.25)', padding: '32px 24px',
@@ -609,6 +617,10 @@ export default function ClassePage() {
               </div>
             </div>
           </div>
+          {/* ═══ POLITIQUE D'ANNULATION ═══
+              Écrite avant le premier litige, pas après. */}
+          <CancellationPolicy compact />
+
           {/* ═══ SIGNALEMENT ═══ */}
           <div style={{
             textAlign: 'center', marginTop: '10px', paddingTop: '18px',

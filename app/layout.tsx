@@ -6,6 +6,7 @@ import { BandwidthProvider } from "@/lib/hooks/useBandwidth";
 import Navbar from "@/components/Navbar";
 import HtmlLangSync from "@/components/HtmlLangSync";
 import ReminderChecker from "@/components/ReminderChecker";
+import InstallPrompt from "@/components/InstallPrompt";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://ostadi.vercel.app";
 
@@ -72,6 +73,17 @@ export const metadata: Metadata = {
   },
 
   formatDetection: { telephone: false },
+
+  // ── PWA ──
+  // Rend le site installable : icône sur l'écran d'accueil,
+  // démarrage sans barre d'adresse. Bien plus léger qu'un APK
+  // sur un téléphone d'entrée de gamme.
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Ostadi",
+  },
 };
 
 export const viewport: Viewport = {
@@ -104,6 +116,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   Ne rend rien à l'écran. Doit rester DANS AuthProvider :
                   il lit l'utilisateur connecté. */}
               <ReminderChecker />
+              {/* Invitation à installer — n'apparaît qu'après 45 s de navigation */}
+              <InstallPrompt />
               <Navbar />
               <main className="ostadi-main">{children}</main>
             </AuthProvider>

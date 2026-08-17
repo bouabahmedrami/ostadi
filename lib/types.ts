@@ -48,6 +48,7 @@ export interface Classe {
   priceType: "session" | "monthly";
   description: string;
   jitsiRoom: string;      // auto-generated room name
+  /** Places disponibles — au-delà, la liste d'attente s'active */
   maxStudents?: number;
   enrolledCount: number;
   attendanceCount: number;
