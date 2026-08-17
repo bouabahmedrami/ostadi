@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { recordReferral } from "@/lib/firestore";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import { trWilaya } from "@/lib/i18n/translate";
@@ -30,6 +31,7 @@ function AuthForm() {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [wilaya, setWilaya] = useState("Alger");
+  const [refCode, setRefCode] = useState((params.get("ref") || "").toUpperCase());
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -105,6 +107,21 @@ function AuthForm() {
         await login(email.trim(), password);
       } else if (mode === "register") {
         await register(email.trim(), password, name.trim(), phone.trim(), wilaya, role);
+
+        // Parrainage — non bloquant : un code invalide ne doit pas
+        // empêcher la création du compte
+        if (refCode.trim().length === 6) {
+          const { auth } = await import("@/lib/firebase");
+          const uid = auth.currentUser?.uid;
+          if (uid) {
+            recordReferral({
+              code: refCode.trim(),
+              refereeId: uid,
+              refereeName: name.trim(),
+            }).catch(err => console.warn("Parrainage non enregistré :", err));
+          }
+        }
+
         setJustRegistered(true);
       } else {
         await resetPassword(email.trim());
@@ -374,6 +391,38 @@ function AuthForm() {
                       </option>
                     ))}
                   </select>
+                </div>
+
+                {/* ── Code de parrainage ──
+                    Pré-rempli si l'utilisateur vient d'un lien /auth?ref=ABC123 */}
+                <div className="au-field au-anim" style={{ animationDelay: "175ms" }}>
+                  <label className="au-label">
+                    🎁 {isRTL ? "كود الدعوة (اختياري)" : "Code de parrainage (optionnel)"}
+                  </label>
+                  <input
+                    className="au-input"
+                    value={refCode}
+                    onChange={e => setRefCode(e.target.value.toUpperCase().slice(0, 6))}
+                    placeholder="ABC123"
+                    maxLength={6}
+                    autoComplete="off"
+                    style={{
+                      letterSpacing: '4px',
+                      fontFamily: 'monospace',
+                      textTransform: 'uppercase',
+                    }}
+                  />
+                  {refCode.length === 6 && (
+                    <p style={{
+                      color: '#4ade80', fontSize: '11px',
+                      margin: '6px 0 0', display: 'flex',
+                      alignItems: 'center', gap: '5px',
+                    }}>
+                      ✓ {isRTL
+                        ? "ستحصلان معاً على 500 دج بعد أول تسجيل"
+                        : "Vous recevrez chacun 500 DA après votre première inscription"}
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -853,7 +902,7 @@ const AU_STYLES = `
 
 export default function AuthPage() {
   return (
-    <Suspense fallback={<div style={{ backgroundColor: '#0A0014', minHeight: '100vh' }} />}>
+    <Suspense fallback={<div style={{ background: '#0A0014', minHeight: '100vh' }} />}>
       <AuthForm />
     </Suspense>
   );

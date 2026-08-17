@@ -13,6 +13,7 @@ import {
   History, Search, Star, MapPin, ArrowRight, Radio, Bell,
 } from "lucide-react";
 import Link from "next/link";
+import CertificateButton from "@/components/CertificateButton";
 
 interface EnrolledClasse extends Classe {
   enrollmentId: string;
@@ -217,6 +218,15 @@ export default function MesCoursPage() {
                 <CourseRow key={c.id} c={c} isRTL={isRTL} formatTime={formatTime} countdown={countdown} dayLabel={formatDay(c.dateTime)} />
               ))}
             </div>
+          </section>
+        )}
+
+        {/* ═══ ATTESTATIONS ═══
+            Un document écrit donne une fin propre à un cours —
+            et une raison d'en reprendre un autre. */}
+        {user && past.length > 0 && (
+          <section style={{ marginBottom: '22px' }}>
+            <CertificateButton studentId={user.uid} />
           </section>
         )}
 

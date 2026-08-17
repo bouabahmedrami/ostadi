@@ -659,6 +659,14 @@ export async function acceptEnrollmentRequest(
     });
   }
 
+  // 3ter. Valide le parrainage — le bonus n'est versé qu'ici,
+  // à la première inscription réelle du filleul.
+  try {
+    await completeReferral(request.studentId);
+  } catch (err) {
+    console.warn("Validation du parrainage échouée :", err);
+  }
+
   // 3bis. Donne accès aux messages déjà échangés dans ce cours.
   // Sans ça, l'élève accepté ne verrait aucun message antérieur.
   try {
@@ -2749,4 +2757,441 @@ export async function getTeacherWaitlistCount(teacherId: string): Promise<number
     query(collection(db, "waitlist"), where("teacherId", "==", teacherId))
   );
   return snap.size;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// PARRAINAGE · SUIVI DE PROGRESSION · ATTESTATIONS
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. PARRAINAGE
+// ═══════════════════════════════════════════════════════════
+
+/** Récompense accordée au parrain et au filleul, en dinars */
+export const REFERRAL_BONUS = 500;
+
+export interface Referral {
+  id: string;
+  /** Celui qui a partagé son code */
+  sponsorId: string;
+  sponsorName: string;
+  /** Celui qui s'est inscrit avec le code */
+  refereeId: string;
+  refereeName: string;
+  code: string;
+  /** Le filleul s'est-il inscrit à un cours ? */
+  completed: boolean;
+  completedAt?: string;
+  /** Le bonus a-t-il été versé ? */
+  rewarded: boolean;
+  createdAt: string;
+}
+
+/**
+ * Génère le code de parrainage d'un utilisateur.
+ *
+ * Dérivé de l'UID, donc stable : le même utilisateur obtient toujours
+ * le même code, sans avoir à le stocker. Six caractères, sans les
+ * lettres et chiffres qui se confondent à l'oral (I, O, 0, 1) — un
+ * code se transmet souvent de vive voix ou par téléphone.
+ */
+export function generateReferralCode(uid: string): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) {
+    hash = (hash * 31 + uid.charCodeAt(i)) >>> 0;
+  }
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += alphabet[hash % alphabet.length];
+    hash = Math.floor(hash / alphabet.length) + uid.charCodeAt(i % uid.length);
+  }
+  return code;
+}
+
+/** Retrouve l'utilisateur derrière un code */
+export async function findUserByReferralCode(code: string): Promise<string | null> {
+  const clean = code.trim().toUpperCase();
+  if (clean.length !== 6) return null;
+
+  // Le code n'étant pas stocké, on le recalcule pour chaque utilisateur.
+  // Acceptable tant que la base reste modeste ; au-delà de quelques
+  // milliers d'inscrits, il faudra stocker le code à la création du compte.
+  const snap = await getDocs(collection(db, "users"));
+  const match = snap.docs.find(d => generateReferralCode(d.id) === clean);
+  return match ? match.id : null;
+}
+
+/**
+ * Enregistre un parrainage à l'inscription.
+ *
+ * Le bonus n'est PAS versé tout de suite : il attend que le filleul
+ * s'inscrive réellement à un cours. Sinon il suffirait de créer dix
+ * comptes fictifs pour récupérer 5 000 DA.
+ */
+export async function recordReferral(data: {
+  code: string;
+  refereeId: string;
+  refereeName: string;
+}): Promise<boolean> {
+  const sponsorId = await findUserByReferralCode(data.code);
+
+  // Code inconnu, ou tentative de s'auto-parrainer
+  if (!sponsorId || sponsorId === data.refereeId) return false;
+
+  // Déjà parrainé ?
+  const existing = await getDocs(
+    query(
+      collection(db, "referrals"),
+      where("refereeId", "==", data.refereeId),
+      limit(1)
+    )
+  );
+  if (!existing.empty) return false;
+
+  const sponsorSnap = await getDoc(doc(db, "users", sponsorId));
+  const sponsorName = sponsorSnap.exists()
+    ? (sponsorSnap.data() as any).displayName || "—"
+    : "—";
+
+  const now = new Date().toISOString();
+
+  await addDoc(collection(db, "referrals"), {
+    sponsorId,
+    sponsorName,
+    refereeId: data.refereeId,
+    refereeName: data.refereeName,
+    code: data.code.trim().toUpperCase(),
+    completed: false,
+    rewarded: false,
+    createdAt: now,
+  });
+
+  await addDoc(collection(db, "notifications"), {
+    userId: sponsorId,
+    type: "message",
+    title: "🎁 Quelqu'un a utilisé votre code",
+    body: `${data.refereeName} s'est inscrit grâce à vous. Votre bonus arrive dès sa première inscription à un cours.`,
+    link: "/parrainage",
+    read: false,
+    createdAt: now,
+  });
+
+  return true;
+}
+
+/**
+ * Valide un parrainage quand le filleul s'inscrit à son premier cours.
+ * À appeler depuis acceptEnrollmentRequest.
+ */
+export async function completeReferral(refereeId: string): Promise<void> {
+  const snap = await getDocs(
+    query(
+      collection(db, "referrals"),
+      where("refereeId", "==", refereeId),
+      where("completed", "==", false),
+      limit(1)
+    )
+  );
+  if (snap.empty) return;
+
+  const ref = snap.docs[0];
+  const r = ref.data() as any;
+  const now = new Date().toISOString();
+
+  await updateDoc(ref.ref, {
+    completed: true,
+    completedAt: now,
+    rewarded: true,
+  });
+
+  // Crédite les deux comptes
+  const batch = writeBatch(db);
+  batch.update(doc(db, "users", r.sponsorId), {
+    referralCredit: increment(REFERRAL_BONUS),
+  });
+  batch.update(doc(db, "users", refereeId), {
+    referralCredit: increment(REFERRAL_BONUS),
+  });
+  await batch.commit();
+
+  // Prévient les deux
+  await Promise.all([
+    addDoc(collection(db, "notifications"), {
+      userId: r.sponsorId,
+      type: "message",
+      title: `🎉 ${REFERRAL_BONUS} DA de crédit`,
+      body: `${r.refereeName} s'est inscrit à son premier cours. Votre bonus de parrainage est crédité.`,
+      link: "/parrainage",
+      read: false,
+      createdAt: now,
+    }),
+    addDoc(collection(db, "notifications"), {
+      userId: refereeId,
+      type: "message",
+      title: `🎉 ${REFERRAL_BONUS} DA de bienvenue`,
+      body: `Votre bonus de parrainage est crédité. Il sera déduit de votre prochain cours.`,
+      link: "/parrainage",
+      read: false,
+      createdAt: now,
+    }),
+  ]);
+}
+
+/** Tableau de bord du parrainage */
+export async function getReferralStats(userId: string) {
+  const [asSponsor, userSnap] = await Promise.all([
+    getDocs(query(collection(db, "referrals"), where("sponsorId", "==", userId))),
+    getDoc(doc(db, "users", userId)),
+  ]);
+
+  const list = asSponsor.docs
+    .map(d => ({ id: d.id, ...d.data() } as Referral))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  return {
+    code: generateReferralCode(userId),
+    invited: list.length,
+    completed: list.filter(r => r.completed).length,
+    pending: list.filter(r => !r.completed).length,
+    earned: list.filter(r => r.rewarded).length * REFERRAL_BONUS,
+    credit: userSnap.exists() ? ((userSnap.data() as any).referralCredit || 0) : 0,
+    list,
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. SUIVI DE PROGRESSION
+// ═══════════════════════════════════════════════════════════
+
+export type ProgressLevel = "struggling" | "progressing" | "good" | "excellent";
+
+export interface ProgressNote {
+  id: string;
+  classeId: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  level: ProgressLevel;
+  /** Ce qui a été vu pendant la séance */
+  topics: string;
+  /** Points à travailler */
+  toWork?: string;
+  /** Visible par l'élève ? Certaines notes sont internes au professeur */
+  sharedWithStudent: boolean;
+  sessionDate: string;
+  createdAt: string;
+}
+
+/**
+ * Enregistre une note de progression.
+ *
+ * C'est ce qui justifie qu'un parent renouvelle le mois suivant :
+ * sans trace écrite, il ne sait pas ce que son enfant a appris.
+ */
+export async function addProgressNote(
+  data: Omit<ProgressNote, "id" | "createdAt">
+): Promise<string> {
+  const now = new Date().toISOString();
+
+  const ref = await addDoc(collection(db, "progress"), {
+    ...data,
+    topics: data.topics.trim().slice(0, 500),
+    toWork: (data.toWork || "").trim().slice(0, 500),
+    createdAt: now,
+  });
+
+  if (data.sharedWithStudent) {
+    try {
+      await addDoc(collection(db, "notifications"), {
+        userId: data.studentId,
+        type: "message",
+        title: "📈 Nouveau retour de votre professeur",
+        body: data.topics.slice(0, 90),
+        link: `/classe/${data.classeId}`,
+        read: false,
+        createdAt: now,
+      });
+    } catch (err) {
+      console.warn("Notification de progression échouée :", err);
+    }
+  }
+
+  return ref.id;
+}
+
+/** Notes d'un élève sur un cours */
+export async function getProgressNotes(
+  classeId: string,
+  studentId: string
+): Promise<ProgressNote[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "progress"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId)
+    )
+  );
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as ProgressNote))
+    .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
+}
+
+/** Toutes les notes d'un cours, groupées par élève */
+export async function getClasseProgress(classeId: string) {
+  const snap = await getDocs(
+    query(collection(db, "progress"), where("classeId", "==", classeId))
+  );
+
+  const byStudent = new Map<string, ProgressNote[]>();
+  snap.docs.forEach(d => {
+    const n = { id: d.id, ...d.data() } as ProgressNote;
+    const arr = byStudent.get(n.studentId) || [];
+    arr.push(n);
+    byStudent.set(n.studentId, arr);
+  });
+
+  return [...byStudent.entries()].map(([studentId, notes]) => {
+    const sorted = notes.sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
+    return {
+      studentId,
+      studentName: sorted[0]?.studentName || "—",
+      notes: sorted,
+      lastLevel: sorted[0]?.level || null,
+      count: sorted.length,
+    };
+  });
+}
+
+export async function deleteProgressNote(noteId: string): Promise<void> {
+  await deleteDoc(doc(db, "progress", noteId));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 3. ATTESTATION DE FIN DE COURS
+// ═══════════════════════════════════════════════════════════
+
+export interface CertificateData {
+  studentName: string;
+  teacherName: string;
+  classeTitle: string;
+  subject: string;
+  level: string;
+  sessionsTotal: number;
+  sessionsAttended: number;
+  attendanceRate: number;
+  startDate: string;
+  endDate: string;
+  wilaya: string;
+  progressLevel?: ProgressLevel;
+  certificateId: string;
+}
+
+/**
+ * Rassemble les données d'une attestation.
+ *
+ * Les parents algériens attachent de la valeur à un document écrit.
+ * C'est aussi ce qui donne une fin propre à un cours — et une raison
+ * d'en reprendre un autre.
+ */
+export async function getCertificateData(
+  classeId: string,
+  studentId: string
+): Promise<CertificateData | null> {
+  const [classeSnap, enrollSnap, progressSnap] = await Promise.all([
+    getDoc(doc(db, "classes", classeId)),
+    getDocs(query(
+      collection(db, "enrollments"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId),
+      limit(1)
+    )),
+    getDocs(query(
+      collection(db, "progress"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId)
+    )),
+  ]);
+
+  if (!classeSnap.exists() || enrollSnap.empty) return null;
+
+  const c = classeSnap.data() as any;
+  const e = enrollSnap.docs[0].data() as any;
+
+  const sessions: string[] = Array.isArray(c.sessions) && c.sessions.length > 0
+    ? [...c.sessions].sort()
+    : [c.dateTime];
+
+  const notes = progressSnap.docs.map(d => d.data() as any);
+  const lastNote = notes.sort((a, b) =>
+    b.sessionDate.localeCompare(a.sessionDate)
+  )[0];
+
+  // Nombre de séances suivies : les notes de progression font foi
+  // si elles existent, sinon on se rabat sur le champ `attended`
+  const attended = notes.length > 0
+    ? notes.length
+    : (e.attended ? sessions.length : 0);
+
+  // Identifiant vérifiable — permet de contrôler l'authenticité
+  const certId = `${classeId.slice(0, 6)}-${studentId.slice(0, 6)}`.toUpperCase();
+
+  return {
+    studentName: e.studentName || "—",
+    teacherName: c.teacherName || "—",
+    classeTitle: c.title || "—",
+    subject: c.subject || "—",
+    level: c.level || "—",
+    sessionsTotal: sessions.length,
+    sessionsAttended: attended,
+    attendanceRate: sessions.length > 0
+      ? Math.round((attended / sessions.length) * 100)
+      : 0,
+    startDate: sessions[0],
+    endDate: sessions[sessions.length - 1],
+    wilaya: c.wilaya || "—",
+    progressLevel: lastNote?.level,
+    certificateId: certId,
+  };
+}
+
+/** Cours terminés pour lesquels un élève peut obtenir une attestation */
+export async function getCertifiableClasses(studentId: string) {
+  const enrollSnap = await getDocs(
+    query(collection(db, "enrollments"), where("studentId", "==", studentId))
+  );
+  if (enrollSnap.empty) return [];
+
+  const out: any[] = [];
+
+  for (const e of enrollSnap.docs) {
+    const enr = e.data() as any;
+    const cSnap = await getDoc(doc(db, "classes", enr.classeId));
+    if (!cSnap.exists()) continue;
+
+    const c = cSnap.data() as any;
+
+    // Seuls les cours terminés donnent lieu à une attestation
+    const sessions: string[] = Array.isArray(c.sessions) && c.sessions.length > 0
+      ? [...c.sessions].sort()
+      : [c.dateTime];
+    const lastMs = new Date(sessions[sessions.length - 1]).getTime();
+    const isOver = c.status === "ended" || lastMs < Date.now();
+
+    if (!isOver) continue;
+
+    out.push({
+      classeId: enr.classeId,
+      title: c.title,
+      subject: c.subject,
+      teacherName: c.teacherName,
+      endDate: sessions[sessions.length - 1],
+      attended: enr.attended,
+    });
+  }
+
+  return out.sort((a, b) => b.endDate.localeCompare(a.endDate));
 }

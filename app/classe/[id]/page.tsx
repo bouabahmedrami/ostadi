@@ -19,6 +19,7 @@ import ReportButton from "@/components/ReportButton";
 import ShareCourse from "@/components/ShareCourse";
 import CancellationPolicy from "@/components/CancellationPolicy";
 import WaitlistButton from "@/components/WaitlistButton";
+import ProgressTracker from "@/components/ProgressTracker";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -494,6 +495,17 @@ export default function ClassePage() {
                 </div>
               )}
             </>
+          )}
+
+          {/* ═══ MA PROGRESSION ═══
+              Seules les notes partagées par le professeur s'affichent. */}
+          {isEnrolled && user && classe && (
+            <ProgressTracker
+              classeId={classe.id}
+              teacherId={classe.teacherId}
+              isTeacher={false}
+              studentId={user.uid}
+            />
           )}
 
           {/* ═══ SUPPORTS DE COURS ═══

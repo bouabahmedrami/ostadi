@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
-import { LogOut, LayoutDashboard, GraduationCap, Menu, X, MessageCircle, Video, History, MailWarning } from "lucide-react";
+import { LogOut, LayoutDashboard, GraduationCap, Menu, X, MessageCircle, Video, History, MailWarning, Gift } from "lucide-react";
 import { useState, useEffect } from "react";
 import LangSwitcher from "./LangSwitcher";
 import NotificationBell from "./NotificationBell";
@@ -101,6 +101,7 @@ export default function Navbar() {
     ...(user && profile?.role === "student" ? [{ href: "/mes-cours", label: t.nav.myCourses, icon: GraduationCap }] : []),
     ...(user ? [{ href: "/chat", label: isRTL ? "المحادثات" : "Messages", icon: MessageCircle, badge: unread }] : []),
     ...(user ? [{ href: "/enregistrements", label: isRTL ? "التسجيلات" : "Vidéos", icon: Video }] : []),
+    ...(user ? [{ href: "/parrainage", label: isRTL ? "الدعوة" : "Parrainage", icon: Gift }] : []),
     ...(user && profile?.role === "student" ? [{ href: "/historique-cours", label: isRTL ? "السجل" : "Historique", icon: History }] : []),
   ];
 

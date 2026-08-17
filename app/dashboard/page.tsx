@@ -19,6 +19,7 @@ import DuplicateClasseModal from "@/components/DuplicateClasseModal";
 import ClasseStats from "@/components/ClasseStats";
 import StudentPayments from "@/components/StudentPayments";
 import ResponseBadge from "@/components/ResponseBadge";
+import ProgressTracker from "@/components/ProgressTracker";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   return (
@@ -582,13 +583,25 @@ export default function DashboardPage() {
             </div>
 
             {/* ═══ SUIVI DES ENCAISSEMENTS ═══ */}
-            <div style={{ marginBottom: '20px' }}>
+            <div style={{ marginBottom: '16px' }}>
               <StudentPayments
                 classeId={selectedClasse.id}
                 classePrice={selectedClasse.price}
                 classeTitle={selectedClasse.title}
               />
             </div>
+
+            {/* ═══ SUIVI DE PROGRESSION ═══
+                Ce qui donne au parent une raison concrète de renouveler. */}
+            {user && (
+              <div style={{ marginBottom: '20px' }}>
+                <ProgressTracker
+                  classeId={selectedClasse.id}
+                  teacherId={user.uid}
+                  isTeacher={true}
+                />
+              </div>
+            )}
 
             {/* ═══ AJOUT MANUEL ═══ */}
             <div style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '14px', padding: '16px' }}>

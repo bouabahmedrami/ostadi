@@ -213,6 +213,37 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Parrainage ────────────────────────────────────────
+    match /referrals/{referralId} {
+      allow read: if isAdmin()
+        || (isAuth() && (resource.data.sponsorId == request.auth.uid
+                      || resource.data.refereeId == request.auth.uid));
+      allow create: if isAuth();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Suivi de progression ──────────────────────────────
+    // L'élève ne voit que ce que le professeur a choisi de partager :
+    // certaines observations sont utiles à consigner sans être
+    // adressées telles quelles.
+    match /progress/{noteId} {
+      allow read: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid)
+        || (isAuth() && resource.data.studentId == request.auth.uid
+            && resource.data.sharedWithStudent == true);
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
+      allow update, delete: if isAdmin()
+        || (isAuth() && resource.data.teacherId == request.auth.uid);
+    }
+
+    // ── Journal des emails ────────────────────────────────
+    // Écrit uniquement par la route serveur, via Firebase Admin,
+    // qui contourne ces règles. Personne d'autre n'y accède.
+    match /emailLog/{logId} {
+      allow read, write: if false;
+    }
+
     // ── Liste d'attente ───────────────────────────────────
     // Un cours complet ne doit pas faire perdre l'élève :
     // il s'inscrit ici et sera prévenu si une place se libère.
