@@ -169,7 +169,7 @@ export default function DashboardPage() {
   }
 
   async function handleAddStudent() {
-    if (!addPhone || !addName || !selectedClasse) { setAddError("Nom et téléphone requis."); return; }
+    if (!addPhone || !addName || !selectedClasse) { setAddError(isRTL ? "الاسم والهاتف مطلوبان." : "Nom et téléphone requis."); return; }
     setAddingStudent(true);
     setAddError("");
     try {
@@ -186,7 +186,7 @@ export default function DashboardPage() {
       setEnrollments(enr);
       setAddPhone(""); setAddName("");
       await loadData();
-    } catch { setAddError("Erreur lors de l'ajout."); }
+    } catch { setAddError(isRTL ? "خطأ أثناء الإضافة." : "Erreur lors de l'ajout."); }
     finally { setAddingStudent(false); }
   }
 
@@ -214,7 +214,10 @@ export default function DashboardPage() {
   const smallBtn = { display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit' };
 
   return (
-    <div style={{ minHeight: '100vh' }}>
+    // Sans `dir`, la mise en page reste en sens français même quand
+    // l'interface passe en arabe : les marges, les alignements et les
+    // icônes directionnelles pointent du mauvais côté.
+    <div style={{ minHeight: '100vh' }} dir={isRTL ? 'rtl' : 'ltr'}>
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 16px' }}>
 
         {/* Header */}
@@ -223,10 +226,13 @@ export default function DashboardPage() {
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
               <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#FF8C00', boxShadow: '0 0 10px #FF8C00' }} />
-              <span style={{ color: '#a78bfa', fontSize: '13px', fontWeight: 600, letterSpacing: '2px', textTransform: 'uppercase' }}>Dashboard Professeur</span>
+              <span style={{ color: '#a78bfa', fontSize: '13px', fontWeight: 600, letterSpacing: '2px', textTransform: 'uppercase' }}>
+                {isRTL ? "لوحة الأستاذ" : "Dashboard Professeur"}
+              </span>
             </div>
-            <h1 style={{ fontSize: '28px', fontWeight: 900, color: 'white', margin: 0 }}>
-              Bonjour, <span style={{ color: '#FF8C00' }}>{profile?.displayName}</span> 👋
+            <h1 style={{ fontSize: '28px', fontWeight: 900, color: 'white', margin: 0, letterSpacing: '-0.6px' }}>
+              {isRTL ? "مرحباً، " : "Bonjour, "}
+              <span style={{ color: '#FF8C00' }}>{profile?.displayName}</span> 👋
             </h1>
           </div>
           <button
@@ -235,16 +241,16 @@ export default function DashboardPage() {
             style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px', fontSize: '14px' }}
           >
             <Plus style={{ width: '18px', height: '18px' }} />
-            Nouveau cours
+            {isRTL ? "درس جديد" : "Nouveau cours"}
           </button>
         </div>
 
         {/* Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-          <StatCard label="Cours créés" value={stats.totalClasses} icon={<BookOpen style={{ width: '22px', height: '22px', color: '#a78bfa' }} />} color="rgba(88,28,135,0.5)" />
-          <StatCard label="Élèves inscrits" value={stats.totalStudents} icon={<Users style={{ width: '22px', height: '22px', color: '#60a5fa' }} />} color="rgba(29,78,216,0.3)" />
-          <StatCard label="Présences" value={stats.totalAttendance} icon={<CheckCircle style={{ width: '22px', height: '22px', color: '#34d399' }} />} color="rgba(6,78,59,0.4)" />
-          <StatCard label="Taux présence" value={`${stats.attendanceRate}%`} icon={<TrendingUp style={{ width: '22px', height: '22px', color: '#FF8C00' }} />} color="rgba(194,65,12,0.3)" />
+          <StatCard label={isRTL ? "دروس منشأة" : "Cours créés"} value={stats.totalClasses} icon={<BookOpen style={{ width: '22px', height: '22px', color: '#a78bfa' }} />} color="rgba(88,28,135,0.5)" />
+          <StatCard label={isRTL ? "طلاب مسجّلون" : "Élèves inscrits"} value={stats.totalStudents} icon={<Users style={{ width: '22px', height: '22px', color: '#60a5fa' }} />} color="rgba(29,78,216,0.3)" />
+          <StatCard label={isRTL ? "الحضور" : "Présences"} value={stats.totalAttendance} icon={<CheckCircle style={{ width: '22px', height: '22px', color: '#34d399' }} />} color="rgba(6,78,59,0.4)" />
+          <StatCard label={isRTL ? "نسبة الحضور" : "Taux présence"} value={`${stats.attendanceRate}%`} icon={<TrendingUp style={{ width: '22px', height: '22px', color: '#FF8C00' }} />} color="rgba(194,65,12,0.3)" />
         </div>
         </Sequence>
 
@@ -254,12 +260,18 @@ export default function DashboardPage() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <Star style={{ width: '24px', height: '24px', color: '#FF8C00', flexShrink: 0 }} />
               <div>
-                <div style={{ fontWeight: 700, color: 'white', fontSize: '15px' }}>Passez en Abonnement Professeur ⭐</div>
-                <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>Apparaissez en tête de liste et créez des cours illimités — 2 000 DA/mois</div>
+                <div style={{ fontWeight: 700, color: 'white', fontSize: '15px' }}>
+                  {isRTL ? "اشترك كأستاذ مميز ⭐" : "Passez en Abonnement Professeur ⭐"}
+                </div>
+                <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>
+                  {isRTL
+                    ? "تظهر في مقدّمة القائمة وتنشئ دروساً غير محدودة — 2000 دج/شهر"
+                    : "Apparaissez en tête de liste et créez des cours illimités — 2 000 DA/mois"}
+                </div>
               </div>
             </div>
             <Link href="/abonnement" style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '10px 18px', borderRadius: '12px', textDecoration: 'none', fontSize: '14px', flexShrink: 0 }}>
-              S'abonner →
+              {isRTL ? "← اشترك" : "S'abonner →"}
             </Link>
           </div>
         )}
@@ -270,16 +282,20 @@ export default function DashboardPage() {
               <ShieldCheck style={{ width: '24px', height: '24px', color: '#a78bfa', flexShrink: 0 }} />
               <div>
                 <div style={{ fontWeight: 700, color: 'white', fontSize: '15px' }}>
-                  {profile?.verificationStatus === "pending" ? "Vérification en cours ⏳" : "Faites vérifier votre profil"}
+                  {profile?.verificationStatus === "pending"
+                    ? (isRTL ? "التوثيق جارٍ ⏳" : "Vérification en cours ⏳")
+                    : (isRTL ? "وثّق ملفك" : "Faites vérifier votre profil")}
                 </div>
                 <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>
-                  {profile?.verificationStatus === "pending" ? "Votre dossier est en cours d'examen." : "Badge vérifié + priorité dans les résultats"}
+                  {profile?.verificationStatus === "pending"
+                    ? (isRTL ? "ملفك قيد المراجعة." : "Votre dossier est en cours d'examen.")
+                    : (isRTL ? "شارة التوثيق + أولوية في النتائج" : "Badge vérifié + priorité dans les résultats")}
                 </div>
               </div>
             </div>
             {profile?.verificationStatus !== "pending" && (
               <Link href="/verification" style={{ border: '1px solid rgba(168,85,247,0.5)', color: '#c4b5fd', fontWeight: 700, padding: '10px 18px', borderRadius: '12px', textDecoration: 'none', fontSize: '14px', flexShrink: 0 }}>
-                Vérifier →
+                {isRTL ? "← وثّق" : "Vérifier →"}
               </Link>
             )}
           </div>
@@ -293,10 +309,10 @@ export default function DashboardPage() {
         {/* ═══ TABS ═══ */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', borderBottom: '1px solid rgba(88,28,135,0.3)', paddingBottom: '2px', flexWrap: 'wrap' }}>
           {[
-            { id: "cours", label: "📚 Mes cours", count: classes.length },
-            { id: "stats", label: "📊 Performance", count: null },
-            { id: "revenus", label: "💰 Revenus", count: null },
-            { id: "profil", label: "👤 Mon profil", count: null },
+            { id: "cours", label: isRTL ? "📚 دروسي" : "📚 Mes cours", count: classes.length },
+            { id: "stats", label: isRTL ? "📊 الأداء" : "📊 Performance", count: null },
+            { id: "revenus", label: isRTL ? "💰 الإيرادات" : "💰 Revenus", count: null },
+            { id: "profil", label: isRTL ? "👤 ملفي" : "👤 Mon profil", count: null },
           ].map(tab => (
             <button
               key={tab.id}
@@ -350,7 +366,7 @@ export default function DashboardPage() {
                         <span style={{ background: 'rgba(29,78,216,0.2)', color: '#93c5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>{trLevel(c.level, isRTL)}</span>
                         {(c as any).sessions?.length > 1 && (
                           <span style={{ background: 'rgba(255,140,0,0.15)', color: '#fdba74', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>
-                            📅 {(c as any).sessions.length} séances
+                            📅 {(c as any).sessions.length} {isRTL ? "حصص" : "séances"}
                           </span>
                         )}
                         {c.status === 'live' && <span style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', fontSize: '11px', padding: '3px 10px', borderRadius: '999px', animation: 'pulse 2s infinite' }}>🔴 Live</span>}
@@ -360,9 +376,9 @@ export default function DashboardPage() {
                         {formatDate(c.dateTime)} · {c.durationMinutes} min · <span style={{ color: '#FF8C00', fontWeight: 700 }}>{c.price.toLocaleString()} DA</span>
                       </div>
                       <div style={{ fontSize: '12px', color: '#6d28d9', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                        <span>👥 {c.enrolledCount} inscrits</span>
-                        <span>✅ {c.attendanceCount} présents</span>
-                        {((c as any).viewCount ?? 0) > 0 && <span>👁 {(c as any).viewCount} vues</span>}
+                        <span>👥 {c.enrolledCount} {isRTL ? "مسجّل" : "inscrits"}</span>
+                        <span>✅ {c.attendanceCount} {isRTL ? "حاضر" : "présents"}</span>
+                        {((c as any).viewCount ?? 0) > 0 && <span>👁 {(c as any).viewCount} {isRTL ? "مشاهدة" : "vues"}</span>}
                       </div>
                     </div>
 
@@ -371,27 +387,31 @@ export default function DashboardPage() {
                         href={`/classe/${c.id}`}
                         style={{ display: 'flex', alignItems: 'center', gap: '6px', background: c.status === 'live' ? '#ef4444' : '#FF8C00', color: 'white', padding: '8px 16px', borderRadius: '10px', textDecoration: 'none', fontSize: '13px', fontWeight: 700, boxShadow: c.status === 'live' ? '0 0 15px rgba(239,68,68,0.4)' : '0 0 15px rgba(255,140,0,0.3)' }}
                       >
-                        {c.status === 'live' ? '🔴 En direct' : '▶ Démarrer'}
+                        {c.status === 'live'
+                          ? (isRTL ? '🔴 مباشر' : '🔴 En direct')
+                          : (isRTL ? '▶ ابدأ' : '▶ Démarrer')}
                       </Link>
                       <button onClick={() => setEditingClasse(c)} style={smallBtn}>
-                        <Pencil style={{ width: '14px', height: '14px' }} /> Modifier
+                        <Pencil style={{ width: '14px', height: '14px' }} /> {isRTL ? "تعديل" : "Modifier"}
                       </button>
                       {/* Reconduction — reprend tout sauf les dates */}
                       <button onClick={() => setDuplicating(c)} style={smallBtn} title={isRTL ? "إعادة نشر" : "Reconduire"}>
                         <CopyPlus style={{ width: '14px', height: '14px' }} /> {isRTL ? "إعادة نشر" : "Reconduire"}
                       </button>
                       <button onClick={() => openStudents(c)} style={smallBtn}>
-                        <Users style={{ width: '14px', height: '14px' }} /> Élèves
+                        <Users style={{ width: '14px', height: '14px' }} /> {isRTL ? "الطلاب" : "Élèves"}
                       </button>
                       <Link href={`/chat/${c.id}`} style={{ ...smallBtn, textDecoration: 'none' }}>
-                        <MessageCircle style={{ width: '14px', height: '14px' }} /> Chat
+                        <MessageCircle style={{ width: '14px', height: '14px' }} /> {isRTL ? "محادثة" : "Chat"}
                       </Link>
                       <button
                         onClick={() => copyLink(c.id)}
                         style={{ ...smallBtn, color: copied === c.id ? '#34d399' : '#c4b5fd', background: copied === c.id ? 'rgba(6,78,59,0.3)' : 'transparent', transition: '0.2s' }}
                       >
                         {copied === c.id ? <CheckCircle style={{ width: '14px', height: '14px' }} /> : <Copy style={{ width: '14px', height: '14px' }} />}
-                        {copied === c.id ? 'Copié !' : 'Lien'}
+                        {copied === c.id
+                          ? (isRTL ? 'تم النسخ!' : 'Copié !')
+                          : (isRTL ? 'رابط' : 'Lien')}
                       </button>
                     </div>
                   </div>
@@ -453,8 +473,12 @@ export default function DashboardPage() {
           <div className="os-glass-3" style={{ width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <div>
-                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>Créer un cours</h2>
-                <p style={{ color: '#a78bfa', fontSize: '13px', margin: '4px 0 0' }}>Remplissez les informations du cours</p>
+                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>
+                  {isRTL ? "إنشاء درس" : "Créer un cours"}
+                </h2>
+                <p style={{ color: '#a78bfa', fontSize: '13px', margin: '4px 0 0' }}>
+                  {isRTL ? "املأ معلومات الدرس" : "Remplissez les informations du cours"}
+                </p>
               </div>
               <button onClick={() => setShowCreateModal(false)} style={{ background: 'rgba(88,28,135,0.3)', border: 'none', borderRadius: '10px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#a78bfa' }}>
                 <X style={{ width: '18px', height: '18px' }} />
@@ -463,18 +487,18 @@ export default function DashboardPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={labelStyle}>Titre du cours *</label>
-                <input style={inputStyle} placeholder="Ex: Révision Bac Maths série S" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+                <label style={labelStyle}>{isRTL ? "عنوان الدرس *" : "Titre du cours *"}</label>
+                <input style={inputStyle} placeholder={isRTL ? "مثال: مراجعة بكالوريا رياضيات" : "Ex: Révision Bac Maths série S"} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={labelStyle}>Matière</label>
+                  <label style={labelStyle}>{isRTL ? "المادة" : "Matière"}</label>
                   <select style={inputStyle} value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}>
                     {SUBJECTS.map(s => <option key={s} value={s} style={{ background: '#1A0A3C' }}>{trSubject(s, isRTL)}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Niveau</label>
+                  <label style={labelStyle}>{isRTL ? "المستوى" : "Niveau"}</label>
                   <select style={inputStyle} value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))}>
                     {LEVELS.map(l => <option key={l} value={l} style={{ background: '#1A0A3C' }}>{trLevel(l, isRTL)}</option>)}
                   </select>
@@ -482,30 +506,30 @@ export default function DashboardPage() {
               </div>
               {form.priceType !== "monthly" && (
                 <div>
-                  <label style={labelStyle}>Date et heure *</label>
+                  <label style={labelStyle}>{isRTL ? "التاريخ والوقت *" : "Date et heure *"}</label>
                   <input style={inputStyle} type="datetime-local" value={form.dateTime} onChange={e => setForm(f => ({ ...f, dateTime: e.target.value }))} />
                 </div>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={labelStyle}>Durée (min)</label>
+                  <label style={labelStyle}>{isRTL ? "المدة (د)" : "Durée (min)"}</label>
                   <input style={inputStyle} type="number" value={form.durationMinutes} onChange={e => setForm(f => ({ ...f, durationMinutes: +e.target.value }))} />
                 </div>
                 <div>
-                  <label style={labelStyle}>Prix (DA)</label>
+                  <label style={labelStyle}>{isRTL ? "السعر (دج)" : "Prix (DA)"}</label>
                   <input style={inputStyle} type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: +e.target.value }))} />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={labelStyle}>Type de prix</label>
+                  <label style={labelStyle}>{isRTL ? "نوع السعر" : "Type de prix"}</label>
                   <select style={inputStyle} value={form.priceType} onChange={e => setForm(f => ({ ...f, priceType: e.target.value as "session" | "monthly" }))}>
-                    <option value="session" style={{ background: '#1A0A3C' }}>Par séance</option>
-                    <option value="monthly" style={{ background: '#1A0A3C' }}>Par mois</option>
+                    <option value="session" style={{ background: '#1A0A3C' }}>{isRTL ? "بالحصة" : "Par séance"}</option>
+                    <option value="monthly" style={{ background: '#1A0A3C' }}>{isRTL ? "بالشهر" : "Par mois"}</option>
                   </select>
                 </div>
                 <div>
-                  <label style={labelStyle}>Wilaya</label>
+                  <label style={labelStyle}>{isRTL ? "الولاية" : "Wilaya"}</label>
                   <select style={inputStyle} value={form.wilaya} onChange={e => setForm(f => ({ ...f, wilaya: e.target.value }))}>
                     {WILAYAS.map(w => <option key={w} value={w} style={{ background: '#1A0A3C' }}>{trWilaya(w, isRTL)}</option>)}
                   </select>
@@ -548,8 +572,8 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div>
-                <label style={labelStyle}>Description</label>
-                <textarea style={{ ...inputStyle, resize: 'none' }} rows={3} placeholder="Décrivez votre cours..." value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                <label style={labelStyle}>{isRTL ? "الوصف" : "Description"}</label>
+                <textarea style={{ ...inputStyle, resize: 'none' }} rows={3} placeholder={isRTL ? "صف درسك..." : "Décrivez votre cours..."} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
               </div>
               {createError && (
                 <div style={{
@@ -573,9 +597,9 @@ export default function DashboardPage() {
                 style={{ width: '100%', background: creating || !form.title || (form.priceType === "monthly" ? sessions.length === 0 : !form.dateTime) ? 'rgba(255,140,0,0.4)' : '#FF8C00', color: 'white', fontWeight: 800, padding: '14px', borderRadius: '14px', border: 'none', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
                 {creating ? (
-                  <><div style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /> Création...</>
+                  <><div style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /> {isRTL ? "جارٍ الإنشاء..." : "Création..."}</>
                 ) : (
-                  <><Zap style={{ width: '16px', height: '16px' }} /> Créer le cours</>
+                  <><Zap style={{ width: '16px', height: '16px' }} /> {isRTL ? "إنشاء الدرس" : "Créer le cours"}</>
                 )}
               </button>
             </div>
@@ -623,18 +647,22 @@ export default function DashboardPage() {
             {/* ═══ AJOUT MANUEL ═══ */}
             <div style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '14px', padding: '16px' }}>
               <p style={{ fontSize: '12px', color: '#fdba74', marginBottom: '12px', fontWeight: 600 }}>
-                ⚠️ En ajoutant un élève, vous confirmez avoir reçu son paiement.
+                {isRTL
+                  ? "⚠️ بإضافة طالب، تؤكّد أنك استلمت دفعته."
+                  : "⚠️ En ajoutant un élève, vous confirmez avoir reçu son paiement."}
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <input style={inputStyle} placeholder="Nom de l'élève" value={addName} onChange={e => setAddName(e.target.value)} />
-                <input style={inputStyle} placeholder="Numéro de téléphone" value={addPhone} onChange={e => setAddPhone(e.target.value)} />
+                <input style={inputStyle} placeholder={isRTL ? "اسم الطالب" : "Nom de l'élève"} value={addName} onChange={e => setAddName(e.target.value)} />
+                <input style={inputStyle} placeholder={isRTL ? "رقم الهاتف" : "Numéro de téléphone"} value={addPhone} onChange={e => setAddPhone(e.target.value)} />
                 {addError && <p style={{ color: '#f87171', fontSize: '12px', margin: 0 }}>{addError}</p>}
                 <button
                   onClick={handleAddStudent}
                   disabled={addingStudent}
                   style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', fontSize: '14px' }}
                 >
-                  {addingStudent ? "Ajout..." : "+ Ajouter l'élève"}
+                  {addingStudent
+                    ? (isRTL ? "جارٍ الإضافة..." : "Ajout...")
+                    : (isRTL ? "+ إضافة الطالب" : "+ Ajouter l'élève")}
                 </button>
               </div>
             </div>

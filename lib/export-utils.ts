@@ -195,17 +195,51 @@ export function printPDF(doc: PdfDocument) {
 </body>
 </html>`;
 
-  const w = window.open("", "_blank", "width=900,height=700");
-  if (!w) {
+  /**
+   * Impression via un cadre invisible plutôt qu'une fenêtre séparée.
+   *
+   * ⚠️ `window.open` échouait sur Chrome Android : le navigateur
+   * n'autorise l'ouverture d'une fenêtre que dans la continuité
+   * immédiate d'un geste utilisateur. Ici l'appel arrive après la
+   * récupération des données, donc après un `await` — la chaîne est
+   * rompue et le bloqueur s'active silencieusement.
+   *
+   * Un iframe ajouté au document n'est pas soumis à cette règle.
+   */
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText =
+    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(frame);
+
+  const win = frame.contentWindow;
+  if (!win) {
+    frame.remove();
     alert(
       doc.isRTL
-        ? "يرجى السماح بالنوافذ المنبثقة لتحميل الملف."
-        : "Autorisez les fenêtres pop-up pour générer le PDF."
+        ? "تعذّر إنشاء الملف."
+        : "Impossible de générer le document."
     );
     return;
   }
-  w.document.write(html);
-  w.document.close();
+
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+
+  // Délai pour le chargement des polices : sans lui, l'arabe
+  // s'imprime dans une police de repli
+  setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } catch (err) {
+      console.error("Impression échouée :", err);
+    }
+    // Retrait après la boîte d'impression — la supprimer trop tôt
+    // annule l'opération sur certains mobiles
+    setTimeout(() => frame.remove(), 1500);
+  }, 800);
 }
 
 function escapeHtml(s: string): string {

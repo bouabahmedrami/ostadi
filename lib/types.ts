@@ -222,9 +222,33 @@ export interface TeacherEarnings {
 export interface Notification {
   id: string;
   userId: string;           // destinataire
-  type: "message" | "course_starting" | "course_live" | "rating" | "verification" | "subscription";
+  /**
+   * Catégorie — pilote l'icône et la couleur dans la cloche.
+   *
+   * "live" et "recording" ont été ajoutés après coup : les rappels de
+   * cours et les dépôts de supports les utilisaient déjà sans qu'ils
+   * figurent ici, ce que TypeScript signalait à juste titre.
+   */
+  type:
+    | "message"
+    | "course_starting"
+    | "course_live"
+    | "live"
+    | "recording"
+    | "rating"
+    | "verification"
+    | "subscription";
   title: string;
   body: string;
+  /**
+   * Versions arabes.
+   *
+   * Optionnelles : les notifications créées avant cette évolution
+   * n'en ont pas. L'affichage se rabat alors sur le français plutôt
+   * que de laisser un blanc.
+   */
+  titleAr?: string;
+  bodyAr?: string;
   link?: string;             // ex: /classe/xxx ou /chat/xxx
   read: boolean;
   createdAt: string;

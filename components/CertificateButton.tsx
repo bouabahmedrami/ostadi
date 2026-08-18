@@ -350,17 +350,50 @@ function printCertificate(d: any, isRTL: boolean) {
     </div>
   </footer>
 </div></div>
-<script>window.onload = () => window.print();</script>
 </body>
 </html>`;
 
-  const w = window.open("", "_blank", "width=900,height=760");
-  if (!w) {
+  /**
+   * Impression via un cadre invisible, plutôt qu'une fenêtre séparée.
+   *
+   * ⚠️ Pourquoi ce détour : `window.open` échouait systématiquement sur
+   * Chrome Android. Le navigateur n'autorise l'ouverture d'une fenêtre
+   * que dans la continuité directe d'un geste utilisateur — or ici,
+   * l'appel arrive après un `await` sur les données, ce qui rompt la
+   * chaîne. Le bloqueur de pop-ups s'active, sans message d'erreur.
+   *
+   * Un iframe ajouté au document échappe entièrement à cette règle.
+   */
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText =
+    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;";
+  document.body.appendChild(frame);
+
+  const doc = frame.contentWindow?.document;
+  if (!doc) {
+    frame.remove();
     alert(isRTL
-      ? "يرجى السماح بالنوافذ المنبثقة لتحميل الشهادة."
-      : "Autorisez les fenêtres pop-up pour générer l'attestation.");
+      ? "تعذّر إنشاء الوثيقة."
+      : "Impossible de générer le document.");
     return;
   }
-  w.document.write(html);
-  w.document.close();
+
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Laisse le temps aux polices de charger — sans ce délai,
+  // l'arabe s'imprime dans une police de repli
+  setTimeout(() => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch (err) {
+      console.error("Impression échouée :", err);
+    }
+    // On retire le cadre après la boîte d'impression, pas avant :
+    // le supprimer trop tôt annule l'impression sur certains mobiles
+    setTimeout(() => frame.remove(), 1500);
+  }, 900);
 }

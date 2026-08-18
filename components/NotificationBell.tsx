@@ -1,26 +1,27 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { Bell, MessageCircle, Video, Star, ShieldCheck, Crown, Check, AlertCircle } from "lucide-react";
+import { Bell, MessageCircle, Video, Star, ShieldCheck, Crown, Check, AlertCircle, FileText } from "lucide-react";
 import { collection, query, where, orderBy, limit, onSnapshot, doc, updateDoc, writeBatch, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useLang } from "@/lib/lang-context";
 import Link from "next/link";
 
-interface Notification {
-  id: string;
-  userId: string;
-  type: "message" | "course_starting" | "course_live" | "rating" | "verification" | "subscription";
-  title: string;
-  body: string;
-  link?: string;
-  read: boolean;
-  createdAt: string;
-}
+/**
+ * Le type vient de lib/types.ts.
+ *
+ * Il était redéfini localement, ce qui posait deux problèmes : les
+ * champs arabes ajoutés au type central n'existaient pas ici, et les
+ * catégories "live" et "recording" — pourtant utilisées à la création
+ * — manquaient. TypeScript signalait les deux.
+ */
+import type { Notification } from "@/lib/types";
 
 const ICONS: Record<string, any> = {
   message: MessageCircle,
   course_starting: Video,
   course_live: Video,
+  live: Video,
+  recording: FileText,
   rating: Star,
   verification: ShieldCheck,
   subscription: Crown,
@@ -30,10 +31,16 @@ const COLORS: Record<string, string> = {
   message: "#60a5fa",
   course_starting: "#FF8C00",
   course_live: "#ef4444",
+  live: "#ef4444",
+  recording: "#22c55e",
   rating: "#FF8C00",
   verification: "#a78bfa",
   subscription: "#FF8C00",
 };
+
+/* Repli si une catégorie inconnue arrive en base */
+const FALLBACK_ICON = Bell;
+const FALLBACK_COLOR = "#a78bfa";
 
 export default function NotificationBell({ userId }: { userId: string }) {
   const { isRTL } = useLang();
@@ -185,16 +192,24 @@ export default function NotificationBell({ userId }: { userId: string }) {
               </div>
             ) : (
               notifs.map(notif => {
-                const Icon = ICONS[notif.type] || Bell;
-                const color = COLORS[notif.type] || "#a78bfa";
+                const Icon = ICONS[notif.type] || FALLBACK_ICON;
+                const color = COLORS[notif.type] || FALLBACK_COLOR;
                 const content = (
                   <div className={`ostadi-notif-item ${!notif.read ? 'ostadi-notif-item-unread' : ''}`}>
                     <div className="ostadi-notif-icon" style={{ background: `${color}22`, color }}>
                       <Icon size={15} />
                     </div>
                     <div className="ostadi-notif-content">
-                      <div className="ostadi-notif-item-title">{notif.title}</div>
-                      <div className="ostadi-notif-item-body">{notif.body}</div>
+                      {/* Repli sur le français : les notifications
+                          créées avant l'ajout de l'arabe n'ont pas de
+                          version traduite, mieux vaut du français
+                          qu'un blanc. */}
+                      <div className="ostadi-notif-item-title">
+                        {isRTL && notif.titleAr ? notif.titleAr : notif.title}
+                      </div>
+                      <div className="ostadi-notif-item-body">
+                        {isRTL && notif.bodyAr ? notif.bodyAr : notif.body}
+                      </div>
                       <div className="ostadi-notif-time">{timeAgo(notif.createdAt)}</div>
                     </div>
                     {!notif.read && <div className="ostadi-notif-dot" />}
@@ -229,14 +244,42 @@ export default function NotificationBell({ userId }: { userId: string }) {
           display: flex; align-items: center; justify-content: center; border: 2px solid #0A0014;
         }
 
+        /* Panneau de notifications.
+           Sur mobile il est en position fixe, avec une marge de chaque
+           cote : ancre a la cloche, un panneau de 340 px sortait de
+           l ecran. La contrainte max-width limitait la largeur sans
+           jamais repositionner, donc le debordement restait entier. */
         .ostadi-notif-dropdown {
-          position: absolute; top: calc(100% + 10px); right: 0; width: 340px; max-width: 90vw;
-          background: linear-gradient(160deg, #150a2e, #0a0014);
-          border: 1px solid rgba(124,58,237,0.25); border-radius: 18px;
-          box-shadow: 0 20px 50px rgba(0,0,0,0.5); z-index: 200; overflow: hidden;
-          animation: notifSlideIn 0.2s ease;
+          position: fixed;
+          top: 64px;
+          inset-inline-start: 10px;
+          inset-inline-end: 10px;
+          width: auto;
+          background: rgba(21, 10, 46, 0.9);
+          backdrop-filter: blur(24px) saturate(1.6);
+          -webkit-backdrop-filter: blur(24px) saturate(1.6);
+          border: 1px solid rgba(168, 85, 247, 0.28);
+          border-radius: 18px;
+          box-shadow: 0 20px 50px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.06);
+          z-index: 200;
+          overflow: hidden;
+          animation: notifSlideIn 0.22s cubic-bezier(0.22, 1, 0.36, 1);
         }
-        .ostadi-notif-dropdown-rtl { right: auto; left: 0; }
+
+        /* Au-dela de 640 px, il y a la place de l ancrer a la cloche */
+        @media (min-width: 641px) {
+          .ostadi-notif-dropdown {
+            position: absolute;
+            top: calc(100% + 10px);
+            inset-inline-start: auto;
+            inset-inline-end: 0;
+            width: 360px;
+          }
+          .ostadi-notif-dropdown-rtl {
+            inset-inline-end: auto;
+            inset-inline-start: 0;
+          }
+        }
         @keyframes notifSlideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 
         .ostadi-notif-error {
@@ -259,7 +302,7 @@ export default function NotificationBell({ userId }: { userId: string }) {
           color: #FF8C00; font-size: 11px; font-weight: 600; cursor: pointer;
         }
 
-        .ostadi-notif-list { max-height: 400px; overflow-y: auto; }
+        .ostadi-notif-list { max-height: min(60vh, 420px); overflow-y: auto; }
         .ostadi-notif-empty { text-align: center; padding: 40px 20px; color: #6d28d9; font-size: 13px; }
 
         .ostadi-notif-item {
