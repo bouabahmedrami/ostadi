@@ -101,7 +101,11 @@ export default function Navbar() {
     ...(user && profile?.role === "student" ? [{ href: "/mes-cours", label: t.nav.myCourses, icon: GraduationCap }] : []),
     ...(user ? [{ href: "/chat", label: isRTL ? "المحادثات" : "Messages", icon: MessageCircle, badge: unread }] : []),
     ...(user ? [{ href: "/enregistrements", label: isRTL ? "التسجيلات" : "Vidéos", icon: Video }] : []),
-    ...(user ? [{ href: "/parrainage", label: isRTL ? "الدعوة" : "Parrainage", icon: Gift }] : []),
+    // Récompenses : réservé aux élèves. Un professeur qui parraine
+    // toucherait un bon utilisable sur ses propres cours.
+    ...(user && profile?.role === "student"
+      ? [{ href: "/recompenses", label: isRTL ? "المكافآت" : "Récompenses", icon: Gift }]
+      : []),
     ...(user && profile?.role === "student" ? [{ href: "/historique-cours", label: isRTL ? "السجل" : "Historique", icon: History }] : []),
   ];
 

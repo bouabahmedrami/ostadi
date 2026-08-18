@@ -17,6 +17,7 @@ import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
 import { ClasseGridSkeleton, EmptyState } from "@/components/Skeletons";
 import { ChalkUnderline } from "@/components/Chalk";
 import { haptic } from "@/lib/haptics";
+import { isSessionPast, parseSessionDate } from "@/lib/course-access";
 type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
 
 export default function HomePage() {
@@ -58,7 +59,19 @@ export default function HomePage() {
 
   // ── Filtrage + tri côté client (instantané) ──────────
   const filtered = useMemo(() => {
-    let list = [...allClasses];
+    /**
+     * ⚠️ Les cours passés sont écartés d'emblée.
+     *
+     * Un élève qui arrive sur la page d'accueil cherche un cours à
+     * suivre, pas l'historique de la plateforme. Afficher des séances
+     * terminées donne l'impression d'un catalogue vide de sens, et
+     * fait perdre du temps avant d'arriver aux cours disponibles.
+     *
+     * Le filtre s'appuie sur la DERNIÈRE séance : un cours mensuel
+     * reste visible tant qu'il en reste une à venir, même si les
+     * premières sont passées — un élève peut encore le rejoindre.
+     */
+    let list = allClasses.filter(c => !isSessionPast(c as any));
 
     // Recherche globale : titre, matière, prof, description
     if (search.trim()) {
@@ -87,10 +100,10 @@ export default function HomePage() {
     if (minPrice) list = list.filter(c => (c.price || 0) >= Number(minPrice));
     if (maxPrice) list = list.filter(c => (c.price || 0) <= Number(maxPrice));
     if (minRating > 0) list = list.filter(c => (c.teacherRating || 0) >= minRating);
-    if (dateFrom) list = list.filter(c => new Date(c.dateTime) >= new Date(dateFrom));
+    if (dateFrom) list = list.filter(c => parseSessionDate(c.dateTime) >= new Date(dateFrom).getTime());
     if (dateTo) {
       const end = new Date(dateTo); end.setHours(23, 59, 59);
-      list = list.filter(c => new Date(c.dateTime) <= end);
+      list = list.filter(c => parseSessionDate(c.dateTime) <= end.getTime());
     }
 
     // Tri

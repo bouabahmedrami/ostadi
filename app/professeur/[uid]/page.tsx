@@ -16,6 +16,7 @@ import { AvailabilityDisplay } from "@/components/Availability";
 import ReportButton from "@/components/ReportButton";
 import TeacherVideo from "@/components/TeacherVideo";
 import ResponseBadge from "@/components/ResponseBadge";
+import FollowButton from "@/components/FollowButton";
 import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
 import { ProfileSkeleton, EmptyState } from "@/components/Skeletons";
 import {
@@ -122,6 +123,16 @@ export default function TeacherProfilePage() {
                 )}
                 {/* Réactivité — rassure avant même l'envoi de la demande */}
                 <ResponseBadge teacherId={uid as string} />
+              </div>
+
+              {/* Suivre — l'élève reste informé des nouveaux cours,
+                  et le professeur voit sa communauté grandir */}
+              <div style={{ marginBottom: '12px' }}>
+                <FollowButton
+                  teacherId={uid as string}
+                  teacherName={teacher.displayName}
+                  followerCount={(teacher as any).followerCount || 0}
+                />
               </div>
 
               <div className="tp-meta">

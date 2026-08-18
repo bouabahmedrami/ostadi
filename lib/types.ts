@@ -31,8 +31,8 @@ export interface UserProfile {
   suspended?: boolean;
   suspendedAt?: string | null;
   suspensionReason?: string | null;
-  /** Crédit accumulé par parrainage, en dinars */
-  referralCredit?: number;
+  /** Nombre d'abonnés — dupliqué pour éviter un comptage à chaque visite */
+  followerCount?: number;
 }
 
 export interface Classe {

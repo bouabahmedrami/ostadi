@@ -4,6 +4,7 @@ import {
   increment,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { parseSessionDate, CLOSE_AFTER_MIN } from "./course-access";
 import { Classe, Enrollment, UserProfile, Rating } from "./types";
 
 // ─── User Profiles ──────────────────────────────────────────────────
@@ -826,11 +827,21 @@ export async function autoArchiveFinishedClasses(): Promise<number> {
         ? sessions[sessions.length - 1]
         : c.dateTime;
 
-    const start = new Date(lastDate);
-    const endTime = new Date(start.getTime() + (c.durationMinutes || 60) * 60000);
-    const oneHourAfterEnd = new Date(endTime.getTime() + 60 * 60000);
+    /**
+     * ⚠️ Lecture via parseSessionDate, pas new Date().
+     *
+     * Les dates naïves étaient interprétées comme UTC côté serveur,
+     * d'où un décalage d'une heure : des cours étaient archivés avec
+     * une heure d'avance, et devenaient inaccessibles alors qu'ils
+     * n'avaient pas encore eu lieu.
+     */
+    const startMs = parseSessionDate(lastDate);
+    if (Number.isNaN(startMs)) return;
 
-    if (now > oneHourAfterEnd) {
+    const endMs = startMs + (c.durationMinutes || 60) * 60_000;
+    const closeMs = endMs + CLOSE_AFTER_MIN * 60_000;
+
+    if (now.getTime() > closeMs) {
       batch.update(d.ref, {
         status: "ended",
         archivedAt: now.toISOString(),
@@ -2806,8 +2817,6 @@ export async function getTeacherWaitlistCount(teacherId: string): Promise<number
 // 1. PARRAINAGE
 // ═══════════════════════════════════════════════════════════
 
-/** Récompense accordée au parrain et au filleul, en dinars */
-export const REFERRAL_BONUS = 500;
 
 export interface Referral {
   id: string;
@@ -2921,89 +2930,7 @@ titleAr: "🎁 استعمل أحدهم كودك",
   return true;
 }
 
-/**
- * Valide un parrainage quand le filleul s'inscrit à son premier cours.
- * À appeler depuis acceptEnrollmentRequest.
- */
-export async function completeReferral(refereeId: string): Promise<void> {
-  const snap = await getDocs(
-    query(
-      collection(db, "referrals"),
-      where("refereeId", "==", refereeId),
-      where("completed", "==", false),
-      limit(1)
-    )
-  );
-  if (snap.empty) return;
 
-  const ref = snap.docs[0];
-  const r = ref.data() as any;
-  const now = new Date().toISOString();
-
-  await updateDoc(ref.ref, {
-    completed: true,
-    completedAt: now,
-    rewarded: true,
-  });
-
-  // Crédite les deux comptes
-  const batch = writeBatch(db);
-  batch.update(doc(db, "users", r.sponsorId), {
-    referralCredit: increment(REFERRAL_BONUS),
-  });
-  batch.update(doc(db, "users", refereeId), {
-    referralCredit: increment(REFERRAL_BONUS),
-  });
-  await batch.commit();
-
-  // Prévient les deux
-  await Promise.all([
-    addDoc(collection(db, "notifications"), {
-      userId: r.sponsorId,
-      type: "message",
-      title: `🎉 ${REFERRAL_BONUS} DA de crédit`,
-      titleAr: `🎉 ${REFERRAL_BONUS} دج رصيد`,
-      body: `${r.refereeName} s'est inscrit à son premier cours. Votre bonus de parrainage est crédité.`,
-      bodyAr: `التحق ${r.refereeName} بأول درس له. تمّ إضافة مكافأة الدعوة إلى رصيدك.`,
-      link: "/parrainage",
-      read: false,
-      createdAt: now,
-    }),
-    addDoc(collection(db, "notifications"), {
-      userId: refereeId,
-      type: "message",
-      title: `🎉 ${REFERRAL_BONUS} DA de bienvenue`,
-      titleAr: `🎉 ${REFERRAL_BONUS} دج هدية ترحيب`,
-      body: `Votre bonus de parrainage est crédité. Il sera déduit de votre prochain cours.`,
-      bodyAr: `تمّ إضافة مكافأة الدعوة إلى رصيدك. ستُخصم من درسك القادم.`,
-      link: "/parrainage",
-      read: false,
-      createdAt: now,
-    }),
-  ]);
-}
-
-/** Tableau de bord du parrainage */
-export async function getReferralStats(userId: string) {
-  const [asSponsor, userSnap] = await Promise.all([
-    getDocs(query(collection(db, "referrals"), where("sponsorId", "==", userId))),
-    getDoc(doc(db, "users", userId)),
-  ]);
-
-  const list = asSponsor.docs
-    .map(d => ({ id: d.id, ...d.data() } as Referral))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
-  return {
-    code: generateReferralCode(userId),
-    invited: list.length,
-    completed: list.filter(r => r.completed).length,
-    pending: list.filter(r => !r.completed).length,
-    earned: list.filter(r => r.rewarded).length * REFERRAL_BONUS,
-    credit: userSnap.exists() ? ((userSnap.data() as any).referralCredit || 0) : 0,
-    list,
-  };
-}
 
 
 // ═══════════════════════════════════════════════════════════
@@ -3239,4 +3166,684 @@ export async function getCertifiableClasses(studentId: string) {
   }
 
   return out.sort((a, b) => b.endDate.localeCompare(a.endDate));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// SUIVI · BONS · FIDÉLITÉ · PRÉSENCE RÉELLE
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. SUIVRE UN PROFESSEUR
+// ═══════════════════════════════════════════════════════════
+
+export interface Follow {
+  id: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  createdAt: string;
+}
+
+/**
+ * L'élève suit un professeur.
+ *
+ * Le compteur est dupliqué sur le profil du professeur : sans cela,
+ * afficher « 128 abonnés » demanderait de compter toute la collection
+ * à chaque visite. Sur le plan gratuit de Firestore, une page de
+ * profil consultée cent fois par jour épuiserait le quota de lectures
+ * à elle seule.
+ */
+export async function followTeacher(data: {
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+}): Promise<void> {
+  // Identifiant déterministe : impossible de suivre deux fois
+  const id = `${data.studentId}_${data.teacherId}`;
+  const ref = doc(db, "follows", id);
+
+  const existing = await getDoc(ref);
+  if (existing.exists()) return;
+
+  const now = new Date().toISOString();
+
+  await setDoc(ref, { ...data, createdAt: now });
+  await updateDoc(doc(db, "users", data.teacherId), {
+    followerCount: increment(1),
+  });
+
+  // Le professeur voit sa communauté grandir — c'est ce qui le
+  // pousse à publier davantage
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: data.teacherId,
+      type: "message",
+      title: "⭐ Un nouvel abonné",
+      titleAr: "⭐ متابع جديد",
+      body: `${data.studentName} suit désormais vos cours.`,
+      bodyAr: `${data.studentName} أصبح يتابع دروسك.`,
+      link: `/professeur/${data.teacherId}`,
+      read: false,
+      createdAt: now,
+    });
+  } catch { /* non bloquant */ }
+}
+
+export async function unfollowTeacher(
+  studentId: string,
+  teacherId: string
+): Promise<void> {
+  const id = `${studentId}_${teacherId}`;
+  const ref = doc(db, "follows", id);
+
+  const existing = await getDoc(ref);
+  if (!existing.exists()) return;
+
+  await deleteDoc(ref);
+
+  // Le compteur ne descend jamais sous zéro, même si un document
+  // a été supprimé manuellement en console
+  const teacherSnap = await getDoc(doc(db, "users", teacherId));
+  const current = teacherSnap.exists()
+    ? ((teacherSnap.data() as any).followerCount || 0)
+    : 0;
+
+  await updateDoc(doc(db, "users", teacherId), {
+    followerCount: Math.max(current - 1, 0),
+  });
+}
+
+export async function isFollowing(
+  studentId: string,
+  teacherId: string
+): Promise<boolean> {
+  const snap = await getDoc(doc(db, "follows", `${studentId}_${teacherId}`));
+  return snap.exists();
+}
+
+/** Professeurs suivis par un élève */
+export async function getFollowedTeachers(studentId: string): Promise<string[]> {
+  const snap = await getDocs(
+    query(collection(db, "follows"), where("studentId", "==", studentId))
+  );
+  return snap.docs.map(d => (d.data() as any).teacherId);
+}
+
+/** Cours à venir des professeurs suivis — le fil personnalisé */
+export async function getFollowedClasses(studentId: string): Promise<Classe[]> {
+  const teacherIds = await getFollowedTeachers(studentId);
+  if (teacherIds.length === 0) return [];
+
+  const out: Classe[] = [];
+  // L'opérateur `in` plafonne à 10 valeurs
+  for (let i = 0; i < teacherIds.length; i += 10) {
+    const chunk = teacherIds.slice(i, i + 10);
+    const snap = await getDocs(
+      query(collection(db, "classes"), where("teacherId", "in", chunk))
+    );
+    out.push(...snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe)));
+  }
+
+  return out
+    .filter(c => c.status !== "ended")
+    .sort((a, b) => a.dateTime.localeCompare(b.dateTime));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. BONS D'ACHAT
+// ═══════════════════════════════════════════════════════════
+
+export type CouponReason = "referral" | "loyalty" | "gift" | "compensation";
+
+export interface Coupon {
+  id: string;
+  userId: string;
+  /** Montant en dinars, ou 0 pour un cours entièrement offert */
+  amount: number;
+  /** Un cours offert quel que soit son prix */
+  freeCourse: boolean;
+  reason: CouponReason;
+  label: string;
+  labelAr: string;
+  used: boolean;
+  usedAt?: string;
+  usedOnClasseId?: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** Durée de validité d'un bon, en jours */
+export const COUPON_VALIDITY_DAYS = 180;
+
+/**
+ * Émet un bon.
+ *
+ * Une date d'expiration est toujours fixée. Sans elle, un bon émis
+ * aujourd'hui resterait une dette ouverte indéfiniment — et six mois
+ * laissent largement le temps de l'utiliser sur une plateforme
+ * scolaire, où l'année a son rythme.
+ */
+export async function issueCoupon(data: {
+  userId: string;
+  amount: number;
+  freeCourse?: boolean;
+  reason: CouponReason;
+  label: string;
+  labelAr: string;
+}): Promise<string> {
+  const now = new Date();
+  const expires = new Date(now.getTime() + COUPON_VALIDITY_DAYS * 86_400_000);
+
+  const ref = await addDoc(collection(db, "coupons"), {
+    ...data,
+    freeCourse: data.freeCourse ?? false,
+    used: false,
+    expiresAt: expires.toISOString(),
+    createdAt: now.toISOString(),
+  });
+
+  await addDoc(collection(db, "notifications"), {
+    userId: data.userId,
+    type: "subscription",
+    title: data.freeCourse ? "🎁 Un cours offert !" : `🎁 Bon de ${data.amount} DA`,
+    titleAr: data.freeCourse ? "🎁 درس مجاني!" : `🎁 قسيمة ${data.amount} دج`,
+    body: data.label,
+    bodyAr: data.labelAr,
+    link: "/parrainage",
+    read: false,
+    createdAt: now.toISOString(),
+  });
+
+  return ref.id;
+}
+
+/** Bons d'un utilisateur, les utilisables en premier */
+export async function getUserCoupons(userId: string): Promise<Coupon[]> {
+  const snap = await getDocs(
+    query(collection(db, "coupons"), where("userId", "==", userId))
+  );
+
+  const nowISO = new Date().toISOString();
+
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as Coupon))
+    .sort((a, b) => {
+      const aOk = !a.used && a.expiresAt > nowISO;
+      const bOk = !b.used && b.expiresAt > nowISO;
+      if (aOk !== bOk) return aOk ? -1 : 1;
+      return b.createdAt.localeCompare(a.createdAt);
+    });
+}
+
+/** Bons encore utilisables */
+export async function getUsableCoupons(userId: string): Promise<Coupon[]> {
+  const all = await getUserCoupons(userId);
+  const nowISO = new Date().toISOString();
+  return all.filter(c => !c.used && c.expiresAt > nowISO);
+}
+
+/** Marque un bon comme consommé */
+export async function useCoupon(
+  couponId: string,
+  classeId: string
+): Promise<void> {
+  await updateDoc(doc(db, "coupons", couponId), {
+    used: true,
+    usedAt: new Date().toISOString(),
+    usedOnClasseId: classeId,
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 3. PARRAINAGE — NOUVELLES RÈGLES
+// ═══════════════════════════════════════════════════════════
+
+/** Nombre de filleuls actifs requis pour déclencher le bon */
+export const REFERRALS_FOR_REWARD = 5;
+
+/** Montant du bon de parrainage, en dinars */
+export const REFERRAL_COUPON_AMOUNT = 1000;
+
+/**
+ * Valide un parrainage et vérifie le seuil.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Remplace l'ancienne règle des 500 DA par filleul.
+ *
+ * Le nouveau modèle récompense l'effort réel : cinq personnes
+ * amenées jusqu'à leur premier cours, pas cinq inscriptions
+ * abandonnées. Le parrain doit vraiment convaincre, ce qui
+ * décourage les comptes fictifs bien plus efficacement qu'une
+ * vérification technique.
+ *
+ * Un filleul ne compte qu'après avoir TERMINÉ son premier cours,
+ * pas à l'inscription : sinon il suffirait de créer cinq comptes
+ * et de s'inscrire cinq fois sans jamais venir.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function completeReferral(refereeId: string): Promise<void> {
+  const snap = await getDocs(
+    query(
+      collection(db, "referrals"),
+      where("refereeId", "==", refereeId),
+      where("completed", "==", false),
+      limit(1)
+    )
+  );
+  if (snap.empty) return;
+
+  const ref = snap.docs[0];
+  const r = ref.data() as any;
+  const now = new Date().toISOString();
+
+  await updateDoc(ref.ref, { completed: true, completedAt: now });
+
+  // Combien de filleuls actifs le parrain compte-t-il ?
+  const allSnap = await getDocs(
+    query(
+      collection(db, "referrals"),
+      where("sponsorId", "==", r.sponsorId),
+      where("completed", "==", true)
+    )
+  );
+  const total = allSnap.size;
+
+  // Seuil franchi ? On regarde le multiple, pour que le parrain
+  // puisse gagner un deuxième bon à dix filleuls, un troisième à
+  // quinze, et ainsi de suite.
+  if (total > 0 && total % REFERRALS_FOR_REWARD === 0) {
+    await issueCoupon({
+      userId: r.sponsorId,
+      amount: REFERRAL_COUPON_AMOUNT,
+      reason: "referral",
+      label: `Bon de ${REFERRAL_COUPON_AMOUNT} DA — ${total} amis parrainés. Utilisable sur n'importe quel cours.`,
+      labelAr: `قسيمة ${REFERRAL_COUPON_AMOUNT} دج — ${total} أصدقاء مدعوّين. صالحة على أيّ درس.`,
+    });
+
+    // Marque les parrainages comme récompensés
+    const batch = writeBatch(db);
+    allSnap.docs.slice(-REFERRALS_FOR_REWARD).forEach(d => {
+      batch.update(d.ref, { rewarded: true });
+    });
+    await batch.commit();
+  } else {
+    // Encouragement : montrer la distance restante entretient l'effort
+    const left = REFERRALS_FOR_REWARD - (total % REFERRALS_FOR_REWARD);
+    try {
+      await addDoc(collection(db, "notifications"), {
+        userId: r.sponsorId,
+        type: "message",
+        title: `🎯 ${total}/${REFERRALS_FOR_REWARD} amis parrainés`,
+        titleAr: `🎯 ${total}/${REFERRALS_FOR_REWARD} أصدقاء`,
+        body: `${r.refereeName} a suivi son premier cours. Encore ${left} pour votre bon de ${REFERRAL_COUPON_AMOUNT} DA.`,
+        bodyAr: `${r.refereeName} تابع درسه الأول. باقي ${left} للحصول على قسيمة ${REFERRAL_COUPON_AMOUNT} دج.`,
+        link: "/parrainage",
+        read: false,
+        createdAt: now,
+      });
+    } catch { /* non bloquant */ }
+  }
+}
+
+/** Tableau de bord du parrainage — nouvelle version */
+export async function getReferralStats(userId: string) {
+  const snap = await getDocs(
+    query(collection(db, "referrals"), where("sponsorId", "==", userId))
+  );
+
+  const list = snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as any))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  const completed = list.filter(r => r.completed).length;
+  const coupons = await getUserCoupons(userId);
+  const referralCoupons = coupons.filter(c => c.reason === "referral");
+
+  return {
+    code: generateReferralCode(userId),
+    invited: list.length,
+    completed,
+    pending: list.length - completed,
+    /** Progression vers le prochain bon */
+    towardNext: completed % REFERRALS_FOR_REWARD,
+    needed: REFERRALS_FOR_REWARD,
+    couponsEarned: referralCoupons.length,
+    totalValue: referralCoupons.reduce((s, c) => s + c.amount, 0),
+    list,
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 4. FIDÉLITÉ — 10 COURS SUIVIS, 1 OFFERT
+// ═══════════════════════════════════════════════════════════
+
+/** Nombre de cours à suivre pour en obtenir un gratuit */
+export const COURSES_FOR_FREE = 10;
+
+/**
+ * Vérifie le seuil de fidélité après un cours terminé.
+ *
+ * On compte les cours réellement SUIVIS — présence confirmée — pas
+ * les inscriptions. Un élève qui s'inscrit à dix cours sans jamais
+ * venir n'a rien fait mériter.
+ */
+export async function checkLoyaltyReward(studentId: string): Promise<boolean> {
+  // Séances de présence effective, un cours ne comptant qu'une fois
+  const snap = await getDocs(
+    query(
+      collection(db, "attendance"),
+      where("studentId", "==", studentId),
+      where("counted", "==", true)
+    )
+  );
+
+  const distinctClasses = new Set(
+    snap.docs.map(d => (d.data() as any).classeId)
+  );
+  const total = distinctClasses.size;
+
+  if (total === 0 || total % COURSES_FOR_FREE !== 0) return false;
+
+  // Ce palier a-t-il déjà été récompensé ?
+  const existing = await getDocs(
+    query(
+      collection(db, "coupons"),
+      where("userId", "==", studentId),
+      where("reason", "==", "loyalty")
+    )
+  );
+  const expectedCount = total / COURSES_FOR_FREE;
+  if (existing.size >= expectedCount) return false;
+
+  await issueCoupon({
+    userId: studentId,
+    amount: 0,
+    freeCourse: true,
+    reason: "loyalty",
+    label: `${total} cours suivis — un cours de votre choix vous est offert.`,
+    labelAr: `${total} دروس متابَعة — درس من اختيارك مجاناً.`,
+  });
+
+  return true;
+}
+
+/** Progression de fidélité, pour l'affichage */
+export async function getLoyaltyProgress(studentId: string) {
+  const [attendSnap, couponSnap] = await Promise.all([
+    getDocs(query(
+      collection(db, "attendance"),
+      where("studentId", "==", studentId),
+      where("counted", "==", true)
+    )),
+    getDocs(query(
+      collection(db, "coupons"),
+      where("userId", "==", studentId),
+      where("reason", "==", "loyalty")
+    )),
+  ]);
+
+  const distinct = new Set(attendSnap.docs.map(d => (d.data() as any).classeId));
+  const total = distinct.size;
+
+  return {
+    completed: total,
+    toward: total % COURSES_FOR_FREE,
+    needed: COURSES_FOR_FREE,
+    freeEarned: couponSnap.size,
+    freeAvailable: couponSnap.docs.filter(d => !(d.data() as any).used).length,
+  };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 5. PRÉSENCE RÉELLE
+// ═══════════════════════════════════════════════════════════
+
+export interface AttendanceSession {
+  id: string;
+  classeId: string;
+  classeTitle: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  /** Date de la séance concernée (ISO) */
+  sessionDate: string;
+  joinedAt: string;
+  /** Dernier signe de vie — mis à jour toutes les 60 secondes */
+  lastSeenAt: string;
+  leftAt?: string;
+  /** Durée effective, en minutes */
+  durationMinutes: number;
+  /** La présence est-elle validée ? Voir MIN_MINUTES_TO_COUNT */
+  counted: boolean;
+}
+
+/**
+ * Durée minimale pour qu'une présence compte.
+ *
+ * Cinq minutes : un élève qui entre, voit que ce n'est pas le bon
+ * cours et ressort ne doit pas être marqué présent. Mais quelqu'un
+ * dont la connexion lâche au bout de dix minutes a bien assisté au
+ * cours — on ne peut pas exiger la séance entière sur des réseaux
+ * algériens où les coupures sont courantes.
+ */
+export const MIN_MINUTES_TO_COUNT = 5;
+
+/**
+ * Enregistre l'entrée d'un élève en salle.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Remplace le bouton « J'ai assisté à ce cours », que personne ne
+ * cliquait — et qui, de toute façon, ne prouvait rien.
+ *
+ * Ici la présence est constatée, pas déclarée. Et surtout, elle est
+ * chronométrée : un parent voit que son enfant est resté 12 minutes
+ * sur une séance d'une heure, ce qu'aucune case cochée ne dirait.
+ * ═══════════════════════════════════════════════════════════
+ *
+ * Renvoie l'identifiant de la séance de présence, à conserver pour
+ * les battements de cœur et la sortie.
+ */
+export async function startAttendance(data: {
+  classeId: string;
+  classeTitle: string;
+  studentId: string;
+  studentName: string;
+  teacherId: string;
+  sessionDate: string;
+}): Promise<string> {
+  const now = new Date().toISOString();
+
+  // Reprise d'une session ouverte : un élève qui rafraîchit sa page
+  // ne doit pas créer une deuxième ligne de présence
+  const existing = await getDocs(
+    query(
+      collection(db, "attendance"),
+      where("classeId", "==", data.classeId),
+      where("studentId", "==", data.studentId),
+      where("sessionDate", "==", data.sessionDate),
+      limit(1)
+    )
+  );
+
+  if (!existing.empty) {
+    const ref = existing.docs[0];
+    await updateDoc(ref.ref, { lastSeenAt: now, leftAt: null });
+    return ref.id;
+  }
+
+  const ref = await addDoc(collection(db, "attendance"), {
+    ...data,
+    joinedAt: now,
+    lastSeenAt: now,
+    durationMinutes: 0,
+    counted: false,
+  });
+
+  return ref.id;
+}
+
+/**
+ * Battement de cœur — à appeler toutes les 60 secondes.
+ *
+ * C'est ce qui permet de survivre à une fermeture brutale : si le
+ * navigateur plante ou que la batterie lâche, `leftAt` ne sera
+ * jamais écrit, mais `lastSeenAt` donne la dernière minute connue.
+ * Sans lui, une présence interrompue compterait pour zéro.
+ */
+export async function heartbeatAttendance(attendanceId: string): Promise<void> {
+  const ref = doc(db, "attendance", attendanceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const a = snap.data() as any;
+  const now = new Date();
+  const joined = new Date(a.joinedAt).getTime();
+  const minutes = Math.round((now.getTime() - joined) / 60_000);
+
+  await updateDoc(ref, {
+    lastSeenAt: now.toISOString(),
+    durationMinutes: minutes,
+    counted: minutes >= MIN_MINUTES_TO_COUNT,
+  });
+}
+
+/**
+ * Sortie de salle — met à jour la durée finale.
+ *
+ * Déclenche aussi la vérification de fidélité et l'incrément du
+ * compteur de présences du cours.
+ */
+export async function endAttendance(attendanceId: string): Promise<void> {
+  const ref = doc(db, "attendance", attendanceId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+
+  const a = snap.data() as any;
+  if (a.leftAt) return; // déjà clôturée
+
+  const now = new Date();
+  const joined = new Date(a.joinedAt).getTime();
+  const minutes = Math.round((now.getTime() - joined) / 60_000);
+  const counted = minutes >= MIN_MINUTES_TO_COUNT;
+
+  await updateDoc(ref, {
+    leftAt: now.toISOString(),
+    lastSeenAt: now.toISOString(),
+    durationMinutes: minutes,
+    counted,
+  });
+
+  if (!counted) return;
+
+  // Compteur du cours, et champ `attended` de l'inscription —
+  // conservés pour ne pas casser l'existant
+  try {
+    const enrollSnap = await getDocs(
+      query(
+        collection(db, "enrollments"),
+        where("classeId", "==", a.classeId),
+        where("studentId", "==", a.studentId),
+        limit(1)
+      )
+    );
+
+    if (!enrollSnap.empty && !(enrollSnap.docs[0].data() as any).attended) {
+      await updateDoc(enrollSnap.docs[0].ref, { attended: true });
+
+      const classeRef = doc(db, "classes", a.classeId);
+      const classeSnap = await getDoc(classeRef);
+      if (classeSnap.exists()) {
+        await updateDoc(classeRef, {
+          attendanceCount: ((classeSnap.data() as any).attendanceCount || 0) + 1,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("Mise à jour de l'inscription échouée :", err);
+  }
+
+  // Fidélité et parrainage
+  try {
+    await checkLoyaltyReward(a.studentId);
+    await completeReferral(a.studentId);
+  } catch (err) {
+    console.warn("Vérification des récompenses échouée :", err);
+  }
+}
+
+/** Présences d'un élève sur un cours */
+export async function getStudentAttendance(
+  classeId: string,
+  studentId: string
+): Promise<AttendanceSession[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "attendance"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId)
+    )
+  );
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as AttendanceSession))
+    .sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
+}
+
+/** Toutes les présences d'un cours, regroupées par élève */
+export async function getClasseAttendance(classeId: string) {
+  const snap = await getDocs(
+    query(collection(db, "attendance"), where("classeId", "==", classeId))
+  );
+
+  const byStudent = new Map<string, AttendanceSession[]>();
+  snap.docs.forEach(d => {
+    const a = { id: d.id, ...d.data() } as AttendanceSession;
+    const arr = byStudent.get(a.studentId) || [];
+    arr.push(a);
+    byStudent.set(a.studentId, arr);
+  });
+
+  return [...byStudent.entries()].map(([studentId, sessions]) => {
+    const sorted = sessions.sort((a, b) => a.sessionDate.localeCompare(b.sessionDate));
+    const counted = sorted.filter(s => s.counted);
+    return {
+      studentId,
+      studentName: sorted[0]?.studentName || "—",
+      sessions: sorted,
+      sessionsAttended: counted.length,
+      totalMinutes: counted.reduce((s, x) => s + (x.durationMinutes || 0), 0),
+      averageMinutes: counted.length
+        ? Math.round(counted.reduce((s, x) => s + (x.durationMinutes || 0), 0) / counted.length)
+        : 0,
+    };
+  }).sort((a, b) => b.sessionsAttended - a.sessionsAttended);
+}
+
+/** Historique de présence d'un élève — vue parent */
+export async function getStudentAttendanceHistory(studentId: string) {
+  const snap = await getDocs(
+    query(collection(db, "attendance"), where("studentId", "==", studentId))
+  );
+
+  const sessions = snap.docs
+    .map(d => ({ id: d.id, ...d.data() } as AttendanceSession))
+    .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
+
+  const counted = sessions.filter(s => s.counted);
+  const distinct = new Set(counted.map(s => s.classeId));
+
+  return {
+    sessions,
+    totalSessions: sessions.length,
+    countedSessions: counted.length,
+    distinctClasses: distinct.size,
+    totalMinutes: counted.reduce((s, x) => s + (x.durationMinutes || 0), 0),
+    averageMinutes: counted.length
+      ? Math.round(counted.reduce((s, x) => s + (x.durationMinutes || 0), 0) / counted.length)
+      : 0,
+  };
 }

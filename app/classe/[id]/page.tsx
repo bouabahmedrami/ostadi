@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  getClasseById, getEnrollmentsByStudent, markAttendance,
+  getClasseById, getEnrollmentsByStudent,
   getRatingByStudentAndClasse, updateClasse, createNotification,
   getEnrollmentsByClasse, createEnrollmentRequest, getMyRequestForClasse,
   trackClasseView, isClasseFull,
@@ -20,6 +20,8 @@ import ShareCourse from "@/components/ShareCourse";
 import CancellationPolicy from "@/components/CancellationPolicy";
 import WaitlistButton from "@/components/WaitlistButton";
 import ProgressTracker from "@/components/ProgressTracker";
+import AttendanceReport from "@/components/AttendanceReport";
+import { useAttendance } from "@/lib/useAttendance";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -107,6 +109,28 @@ export default function ClassePage() {
       )
     : null;
 
+  /**
+   * Chronomètre de présence.
+   *
+   * Se déclenche dès que l'élève inscrit voit la salle ouverte —
+   * c'est-à-dire au moment où il rejoint réellement le cours.
+   *
+   * Remplace le bouton « J'ai assisté à ce cours », que personne ne
+   * cliquait et qui ne prouvait rien. Ici la présence est constatée
+   * et chronométrée : un parent voit que son enfant est resté douze
+   * minutes sur une séance d'une heure.
+   */
+  useAttendance({
+    classeId: (classe?.id as string) || "",
+    classeTitle: classe?.title || "",
+    studentId: user?.uid || "",
+    studentName: profile?.displayName || "",
+    teacherId: classe?.teacherId || "",
+    sessionDate: (classe as any)?.sessions?.[0] || classe?.dateTime || "",
+    active: !!(classe && user && isEnrolled && access?.open),
+  });
+
+
   async function handleSendRequest() {
     if (!user || !profile || !classe) {
       router.push("/auth");
@@ -155,11 +179,6 @@ export default function ClassePage() {
     setClasse(prev => prev ? { ...prev, status: "ended" } : null);
   }
 
-  async function handleAttendance() {
-    if (!enrollment || !classe) return;
-    await markAttendance(enrollment.id, classe.id);
-    setAttended(true);
-  }
 
   function formatDate(iso: string) {
     return new Date(iso).toLocaleDateString(isRTL ? "ar-DZ" : "fr-DZ", {
@@ -282,19 +301,23 @@ export default function ClassePage() {
                   isTeacher={isTeacher}
                 />
               </div>
-              {isEnrolled && !attended && (
-                <button onClick={handleAttendance} className="ostadi-btn-outline" style={{ marginTop: '16px', width: '100%', padding: '13px' }}>
-                  <CheckCircle style={{ width: '17px', height: '17px' }} />
-                  {isRTL ? "حضرت هذا الدرس" : "J'ai assisté à ce cours"}
-                </button>
-              )}
-              {attended && (
+              {/* ⚠️ Le bouton « J'ai assisté » a disparu.
+                  Il ne prouvait rien — n'importe qui pouvait le cocher
+                  sans jamais venir — et personne ne le cliquait. La
+                  présence se compte maintenant toute seule, à partir
+                  du temps réellement passé en salle. */}
+              {isEnrolled && (
                 <div style={{
-                  marginTop: '16px', textAlign: 'center', color: '#34d399', fontWeight: 600, fontSize: '13.5px',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
-                  padding: '12px', background: 'rgba(6,78,59,0.15)', borderRadius: '12px', border: '1px solid rgba(52,211,153,0.2)',
+                  marginTop: '16px', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '8px',
+                  padding: '11px', borderRadius: '12px',
+                  background: 'rgba(34,197,94,0.08)',
+                  border: '1px solid rgba(34,197,94,0.2)',
                 }}>
-                  <CheckCircle style={{ width: '16px', height: '16px' }} /> {isRTL ? "تم تأكيد الحضور — شكراً!" : "Présence confirmée — Merci !"}
+                  <span className="os-pulse" style={{ background: '#22C55E' }} />
+                  <span style={{ color: '#6ee7b7', fontSize: '12.5px', fontWeight: 600 }}>
+                    {isRTL ? "حضورك يُسجَّل تلقائياً" : "Votre présence est enregistrée"}
+                  </span>
                 </div>
               )}
             </div>
@@ -477,6 +500,18 @@ export default function ClassePage() {
                 </div>
               )}
             </>
+          )}
+
+          {/* ═══ MA PRÉSENCE ═══
+              Le détail que le parent regarde : combien de temps,
+              sur quelle séance. */}
+          {isEnrolled && user && classe && (
+            <AttendanceReport
+              classeId={classe.id}
+              classeDuration={classe.durationMinutes}
+              isTeacher={false}
+              studentId={user.uid}
+            />
           )}
 
           {/* ═══ MA PROGRESSION ═══
