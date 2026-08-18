@@ -1,602 +1,712 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
-import { collection, getDocs, query, orderBy } from "firebase/firestore";
-import { db } from "@/lib/firebase";
-import { autoArchiveFinishedClasses } from "@/lib/firestore";
-import { Classe, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
-import ClasseCard from "@/components/ClasseCard";
-import TopTeachers from "@/components/TopTeachers";
+import { getClasses, createClasse, getEnrollmentsByClasse, enrollStudent, getTeacherStats, generateJitsiRoom, autoArchiveFinishedClasses } from "@/lib/firestore";
+import { Classe, Enrollment, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
+import { Plus, Users, Copy, CheckCircle, X, BookOpen, ShieldCheck, MessageCircle, Star, TrendingUp, Zap, Pencil, CopyPlus, BarChart3 } from "lucide-react";
 import Link from "next/link";
-import {
-  Search, X, SlidersHorizontal, Users, Zap, Star, BookOpen,
-  TrendingUp, MapPin, Calendar, Banknote, ArrowUpDown, RotateCcw,
-} from "lucide-react";
-import { trSubject, trLevel, trWilaya } from "@/lib/i18n/translate";
+import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
+import TeacherRevenue from "@/components/TeacherRevenue";
+import BilanDownload from "@/components/BilanDownload";
+import CommissionAlert from "@/components/CommissionAlert";
+import TeacherProfileForm from "@/components/TeacherProfileForm";
+import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
+import EditClasseModal from "@/components/EditClasseModal";
+import SessionsPicker from "@/components/SessionsPicker";
+import DuplicateClasseModal from "@/components/DuplicateClasseModal";
+import ClasseStats from "@/components/ClasseStats";
+import StudentPayments from "@/components/StudentPayments";
 import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
-import { ClasseGridSkeleton, EmptyState } from "@/components/Skeletons";
-import { ChalkUnderline } from "@/components/Chalk";
+import { StatsSkeleton, PageLoader, EmptyState } from "@/components/Skeletons";
+import Sheet from "@/components/Sheet";
+import { useToast } from "@/components/Toast";
 import { haptic } from "@/lib/haptics";
-import { isSessionPast, parseSessionDate } from "@/lib/course-access";
-type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
+import { toAbsoluteISO } from "@/lib/course-access";
+import ResponseBadge from "@/components/ResponseBadge";
+import ProgressTracker from "@/components/ProgressTracker";
+import AttendanceReport from "@/components/AttendanceReport";
 
-export default function HomePage() {
-  const { t, isRTL } = useLang();
-  const [allClasses, setAllClasses] = useState<Classe[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-
-  // ── Filtres ──────────────────────────────────────────
-  const [search, setSearch] = useState("");
-  const [subject, setSubject] = useState("");
-  const [level, setLevel] = useState("");
-  const [wilaya, setWilaya] = useState("");
-  const [teacher, setTeacher] = useState("");
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
-  const [minRating, setMinRating] = useState(0);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("rating");
-
-  useEffect(() => { loadClasses(); }, []);
-
-  async function loadClasses() {
-    setLoading(true);
-    setLoadError(false);
-    try {
-      await autoArchiveFinishedClasses();
-      const snap = await getDocs(query(collection(db, "classes"), orderBy("dateTime", "asc")));
-      setAllClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe)));
-    } catch (err) {
-      console.error("Chargement des cours échoué :", err);
-      setAllClasses([]);
-      setLoadError(true);
-    }
-    finally { setLoading(false); }
-  }
-
-  // ── Filtrage + tri côté client (instantané) ──────────
-  const filtered = useMemo(() => {
-    /**
-     * ⚠️ Les cours passés sont écartés d'emblée.
-     *
-     * Un élève qui arrive sur la page d'accueil cherche un cours à
-     * suivre, pas l'historique de la plateforme. Afficher des séances
-     * terminées donne l'impression d'un catalogue vide de sens, et
-     * fait perdre du temps avant d'arriver aux cours disponibles.
-     *
-     * Le filtre s'appuie sur la DERNIÈRE séance : un cours mensuel
-     * reste visible tant qu'il en reste une à venir, même si les
-     * premières sont passées — un élève peut encore le rejoindre.
-     */
-    let list = allClasses.filter(c => !isSessionPast(c as any));
-
-    // Recherche globale : titre, matière, prof, description
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      list = list.filter(c =>
-        (c.title || "").toLowerCase().includes(q) ||
-        (c.subject || "").toLowerCase().includes(q) ||
-        (c.teacherName || "").toLowerCase().includes(q) ||
-        (c.description || "").toLowerCase().includes(q) ||
-        (c.level || "").toLowerCase().includes(q) ||
-        (c.wilaya || "").toLowerCase().includes(q) ||
-        // Recherche aussi sur les libellés traduits :
-        // un élève arabophone qui tape « الرياضيات » doit trouver « Mathématiques »
-        trSubject(c.subject || "", isRTL).toLowerCase().includes(q) ||
-        trLevel(c.level || "", isRTL).toLowerCase().includes(q) ||
-        trWilaya(c.wilaya || "", isRTL).toLowerCase().includes(q)
-      );
-    }
-    if (subject) list = list.filter(c => c.subject === subject);
-    if (level) list = list.filter(c => c.level === level);
-    if (wilaya) list = list.filter(c => c.wilaya === wilaya);
-    if (teacher.trim()) {
-      const q = teacher.trim().toLowerCase();
-      list = list.filter(c => (c.teacherName || "").toLowerCase().includes(q));
-    }
-    if (minPrice) list = list.filter(c => (c.price || 0) >= Number(minPrice));
-    if (maxPrice) list = list.filter(c => (c.price || 0) <= Number(maxPrice));
-    if (minRating > 0) list = list.filter(c => (c.teacherRating || 0) >= minRating);
-    if (dateFrom) list = list.filter(c => parseSessionDate(c.dateTime) >= new Date(dateFrom).getTime());
-    if (dateTo) {
-      const end = new Date(dateTo); end.setHours(23, 59, 59);
-      list = list.filter(c => parseSessionDate(c.dateTime) <= end.getTime());
-    }
-
-    // Tri
-    switch (sortBy) {
-      case "rating": list.sort((a, b) => (b.teacherRating || 0) - (a.teacherRating || 0)); break;
-      case "price_asc": list.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
-      case "price_desc": list.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
-      case "date_asc": list.sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()); break;
-      case "date_desc": list.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()); break;
-      case "popular": list.sort((a, b) => (b.enrolledCount || 0) - (a.enrolledCount || 0)); break;
-    }
-    return list;
-  }, [allClasses, search, subject, level, wilaya, teacher, minPrice, maxPrice, minRating, dateFrom, dateTo, sortBy, isRTL]);
-
-  // Statistiques réelles calculées depuis les cours chargés
-  const realStats = useMemo(() => {
-    const teacherIds = new Set(allClasses.map(c => c.teacherId).filter(Boolean));
-    const rated = allClasses.filter(c => (c.teacherRating || 0) > 0);
-    const avg = rated.length
-      ? Math.round((rated.reduce((s, c) => s + (c.teacherRating || 0), 0) / rated.length) * 10) / 10
-      : 0;
-    return { teachers: teacherIds.size, avgRating: avg };
-  }, [allClasses]);
-
-  const activeCount = [subject, level, wilaya, teacher, minPrice, maxPrice, dateFrom, dateTo].filter(Boolean).length + (minRating > 0 ? 1 : 0);
-
-  function resetAll() {
-    setSearch(""); setSubject(""); setLevel(""); setWilaya(""); setTeacher("");
-    setMinPrice(""); setMaxPrice(""); setMinRating(0); setDateFrom(""); setDateTo("");
-    setSortBy("rating");
-  }
-
-  const sortLabels: Record<SortKey, string> = {
-    rating: isRTL ? "الأعلى تقييماً" : "Mieux notés",
-    popular: isRTL ? "الأكثر شعبية" : "Plus populaires",
-    price_asc: isRTL ? "السعر ↑" : "Prix croissant",
-    price_desc: isRTL ? "السعر ↓" : "Prix décroissant",
-    date_asc: isRTL ? "الأقرب" : "Date proche",
-    date_desc: isRTL ? "الأبعد" : "Date lointaine",
-  };
+function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
+  // Un chiffre qui monte attire l'œil là où un chiffre posé ne dit
+  // rien. On n'anime que les valeurs numériques pures — « 87 % »
+  // resterait figé sinon.
+  const numeric = typeof value === "number";
 
   return (
-    <div className="ostadi-page" dir={isRTL ? "rtl" : "ltr"}>
-
-      {/* ═══ HERO ═══
-          Les orbes locales ont disparu : l'Atmosphere du layout
-          éclaire déjà toute la page. En superposer d'autres ici
-          empilait deux couches de flou pour rien. */}
-      <section className="ostadi-hero">
-        <Sequence className="ostadi-hero-inner">
-          <div className="ostadi-hero-badge">
-            <Zap size={13} style={{ color: '#FF8C00' }} />
-            {t.home.badge}
-          </div>
-
-          {/* ═══ LE TRAIT DE CRAIE ═══
-              Une seule fois sur toute la page. Répété, il devient un
-              motif décoratif et perd le sens qu'il porte : le geste
-              de l'enseignant qui souligne un mot au tableau. */}
-          <h1 className="ostadi-hero-title">
-            <span className="ostadi-text-white">{t.home.title1} </span>
-            <ChalkUnderline color="#FF8C00" delay={520}>
-              <span className="os-gradient">أستاذي</span>
-            </ChalkUnderline>
-            <br />
-            <span className="ostadi-text-white">{t.home.title2}</span>
-          </h1>
-
-          {/* ── BARRE DE RECHERCHE PRINCIPALE ── */}
-          <div className="ostadi-search-main">
-            <Search size={18} className="ostadi-search-icon" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={isRTL ? "ابحث عن درس، مادة، أو أستاذ..." : "Rechercher un cours, une matière ou un professeur..."}
-              className="ostadi-search-input-main"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} className="ostadi-search-clear">
-                <X size={16} />
-              </button>
-            )}
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`ostadi-filter-toggle ${activeCount > 0 ? 'ostadi-filter-toggle-active' : ''}`}
-            >
-              <SlidersHorizontal size={15} />
-              <span className="ostadi-filter-toggle-label">{isRTL ? "فلاتر" : "Filtres"}</span>
-              {activeCount > 0 && <span className="ostadi-filter-count">{activeCount}</span>}
-            </button>
-          </div>
-
-          {/* ── PANNEAU DE FILTRES ── */}
-          {showFilters && (
-            <div className="ostadi-filters-panel">
-              <div className="ostadi-filters-grid">
-                {/* Matière */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><BookOpen size={12} /> {isRTL ? "المادة" : "Matière"}</label>
-                  <select value={subject} onChange={e => setSubject(e.target.value)} className="ostadi-filter-input">
-                    <option value="">{isRTL ? "كل المواد" : "Toutes"}</option>
-                    {SUBJECTS.map(s => <option key={s} value={s}>{trSubject(s, isRTL)}</option>)}
-                  </select>
-                </div>
-
-                {/* Niveau */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><TrendingUp size={12} /> {isRTL ? "المستوى" : "Niveau"}</label>
-                  <select value={level} onChange={e => setLevel(e.target.value)} className="ostadi-filter-input">
-                    <option value="">{isRTL ? "كل المستويات" : "Tous"}</option>
-                    {LEVELS.map(l => <option key={l} value={l}>{trLevel(l, isRTL)}</option>)}
-                  </select>
-                </div>
-
-                {/* Wilaya */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><MapPin size={12} /> {isRTL ? "الولاية" : "Wilaya"}</label>
-                  <select value={wilaya} onChange={e => setWilaya(e.target.value)} className="ostadi-filter-input">
-                    <option value="">{isRTL ? "كل الولايات" : "Toutes"}</option>
-                    {WILAYAS.map(w => <option key={w} value={w}>{trWilaya(w, isRTL)}</option>)}
-                  </select>
-                </div>
-
-                {/* Professeur */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><Users size={12} /> {isRTL ? "الأستاذ" : "Professeur"}</label>
-                  <input
-                    type="text" value={teacher} onChange={e => setTeacher(e.target.value)}
-                    placeholder={isRTL ? "اسم الأستاذ" : "Nom du prof"}
-                    className="ostadi-filter-input"
-                  />
-                </div>
-
-                {/* Prix min/max */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><Banknote size={12} /> {isRTL ? "السعر (دج)" : "Prix (DA)"}</label>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <input
-                      type="number" value={minPrice} onChange={e => setMinPrice(e.target.value)}
-                      placeholder="Min" className="ostadi-filter-input" style={{ flex: 1 }}
-                    />
-                    <input
-                      type="number" value={maxPrice} onChange={e => setMaxPrice(e.target.value)}
-                      placeholder="Max" className="ostadi-filter-input" style={{ flex: 1 }}
-                    />
-                  </div>
-                </div>
-
-                {/* Dates */}
-                <div className="ostadi-filter-field">
-                  <label className="ostadi-filter-label"><Calendar size={12} /> {isRTL ? "التاريخ" : "Période"}</label>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="ostadi-filter-input" style={{ flex: 1 }} />
-                    <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="ostadi-filter-input" style={{ flex: 1 }} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Étoiles minimum */}
-              <div className="ostadi-filter-field" style={{ marginTop: '14px' }}>
-                <label className="ostadi-filter-label"><Star size={12} /> {isRTL ? "التقييم الأدنى" : "Note minimum"}</label>
-                <div className="ostadi-stars-row">
-                  {[0, 3, 3.5, 4, 4.5].map(r => (
-                    <button
-                      key={r}
-                      onClick={() => setMinRating(r)}
-                      className={`ostadi-star-chip ${minRating === r ? 'ostadi-star-chip-active' : ''}`}
-                    >
-                      {r === 0 ? (isRTL ? "الكل" : "Toutes") : <>★ {r}+</>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Reset */}
-              {activeCount > 0 && (
-                <button onClick={resetAll} className="ostadi-reset-all">
-                  <RotateCcw size={13} /> {isRTL ? "إعادة تعيين كل الفلاتر" : "Réinitialiser tous les filtres"}
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Stats */}
-          <div className="ostadi-stats-row">
-            {[
-              { icon: <BookOpen size={15} />, value: `${allClasses.length}`, label: isRTL ? "درس متاح" : "Cours" },
-              { icon: <Users size={15} />, value: `${realStats.teachers}`, label: t.home.stats.teachers },
-              ...(realStats.avgRating > 0
-                ? [{ icon: <Star size={15} />, value: `${realStats.avgRating}★`, label: t.home.stats.rating }]
-                : []),
-            ].map((s, i) => (
-              <div key={i} className="ostadi-stat-pill">
-                <span className="ostadi-stat-icon">{s.icon}</span>
-                <span className="ostadi-stat-value">{s.value}</span>
-                <span className="ostadi-stat-label">{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </Sequence>
-      </section>
-
-      {/* ═══ TOP TEACHERS ═══ */}
-      <Reveal as="section" className="ostadi-section">
-        <div className="ostadi-section-header">
-          <div className="ostadi-section-icon-badge"><TrendingUp size={16} style={{ color: '#FF8C00' }} /></div>
-          <h2 className="ostadi-section-title">{isRTL ? "أفضل الأساتذة" : "Meilleurs Professeurs"}</h2>
+    <div className="os-glass-2 os-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {icon}
+      </div>
+      <div>
+        <div style={{ fontSize: '28px', fontWeight: 900, color: 'white', lineHeight: 1, letterSpacing: '-0.6px' }}>
+          {numeric ? <CountUp to={value as number} /> : value}
         </div>
-        <TopTeachers />
-      </Reveal>
-
-      {/* ═══ RÉSULTATS ═══ */}
-      <section className="ostadi-section">
-        <div className="ostadi-results-header">
-          <div>
-            <h2 className="ostadi-section-title" style={{ margin: 0 }}>
-              {filtered.length} {isRTL ? "درس" : filtered.length > 1 ? "cours trouvés" : "cours trouvé"}
-            </h2>
-            {(search || activeCount > 0) && (
-              <p className="ostadi-results-sub">
-                {isRTL ? "نتائج البحث المفلترة" : "Résultats filtrés"}
-              </p>
-            )}
-          </div>
-
-          {/* Tri */}
-          <div className="ostadi-sort-wrap">
-            <ArrowUpDown size={14} style={{ color: '#a78bfa' }} />
-            <select value={sortBy} onChange={e => setSortBy(e.target.value as SortKey)} className="ostadi-sort-select">
-              {(Object.keys(sortLabels) as SortKey[]).map(k => (
-                <option key={k} value={k}>{sortLabels[k]}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Chips des filtres actifs */}
-        {activeCount > 0 && (
-          <div className="ostadi-active-chips">
-            {subject && <FilterChip label={trSubject(subject, isRTL)} onRemove={() => setSubject("")} />}
-            {level && <FilterChip label={trLevel(level, isRTL)} onRemove={() => setLevel("")} />}
-            {wilaya && <FilterChip label={trWilaya(wilaya, isRTL)} onRemove={() => setWilaya("")} />}
-            {teacher && <FilterChip label={`👤 ${teacher}`} onRemove={() => setTeacher("")} />}
-            {minPrice && <FilterChip label={`≥ ${minPrice} DA`} onRemove={() => setMinPrice("")} />}
-            {maxPrice && <FilterChip label={`≤ ${maxPrice} DA`} onRemove={() => setMaxPrice("")} />}
-            {minRating > 0 && <FilterChip label={`★ ${minRating}+`} onRemove={() => setMinRating(0)} />}
-            {dateFrom && <FilterChip label={`Dès ${dateFrom}`} onRemove={() => setDateFrom("")} />}
-            {dateTo && <FilterChip label={`Jusqu'au ${dateTo}`} onRemove={() => setDateTo("")} />}
-          </div>
-        )}
-
-        {loading ? (
-          /* Le squelette reprend la forme exacte d'une carte de cours :
-             l'œil se prépare, et rien ne saute quand le vrai contenu
-             arrive. */
-          <ClasseGridSkeleton count={6} />
-        ) : loadError ? (
-          <EmptyState
-            icon={<RotateCcw size={28} />}
-            title={isRTL ? "تعذّر تحميل الدروس" : "Impossible de charger les cours"}
-            hint={isRTL ? "تحقق من اتصالك بالإنترنت" : "Vérifiez votre connexion internet"}
-            action={
-              <button onClick={loadClasses} className="os-btn-chalk" style={{ padding: '11px 22px', display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '13.5px' }}>
-                <RotateCcw size={14} /> {isRTL ? "إعادة المحاولة" : "Réessayer"}
-              </button>
-            }
-          />
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<Search size={28} />}
-            title={isRTL ? "لا توجد نتائج" : "Aucun cours ne correspond"}
-            hint={isRTL ? "جرّب تعديل الفلاتر أو البحث" : "Essayez d'élargir vos critères de recherche"}
-            action={
-              (search || activeCount > 0) ? (
-                <button onClick={resetAll} className="os-btn-ghost" style={{ padding: '11px 22px', display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '13.5px' }}>
-                  <RotateCcw size={14} /> {isRTL ? "إعادة تعيين" : "Réinitialiser"}
-                </button>
-              ) : undefined
-            }
-          />
-        ) : (
-          /* Cascade plafonnée à 8 : au-delà, l'utilisateur attend
-             la fin de l'animation au lieu de lire. */
-          <RevealGroup className="ostadi-classes-grid">
-            {filtered.map(c => <ClasseCard key={c.id} classe={c} />)}
-          </RevealGroup>
-        )}
-      </section>
-
-      {/* ═══ CTA ═══ */}
-      <Reveal as="section" direction="scale" className="ostadi-cta-section">
-        <div className="ostadi-cta-glow" />
-        <div className="ostadi-cta-inner">
-          <h2 className="ostadi-cta-title">{t.home.ctaTitle}</h2>
-          <p className="ostadi-cta-subtitle">
-            {t.home.ctaSubtitle} <span className="ostadi-text-gradient" style={{ fontWeight: 800 }}>Ostadi</span>.
-          </p>
-          <Link href="/auth?mode=register&role=teacher" className="ostadi-cta-btn">{t.home.ctaBtn}</Link>
-        </div>
-      </Reveal>
-
-      <style jsx global>{`
-        .ostadi-page {
-          background: #0A0014; min-height: 100vh;
-          background-image:
-            radial-gradient(circle at 15% 20%, rgba(124,58,237,0.1) 0%, transparent 45%),
-            radial-gradient(circle at 85% 15%, rgba(255,140,0,0.06) 0%, transparent 45%),
-            linear-gradient(rgba(168,85,247,0.025) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(168,85,247,0.025) 1px, transparent 1px);
-          background-size: auto, auto, 44px 44px, 44px 44px;
-          overflow-x: hidden;
-        }
-        .ostadi-hero { position: relative; overflow: hidden; padding: 60px 16px 40px; }
-        .ostadi-hero-inner { position: relative; max-width: 820px; margin: 0 auto; text-align: center; }
-        .ostadi-hero-badge {
-          display: inline-flex; align-items: center; gap: 8px;
-          background: rgba(124,58,237,0.15); border: 1px solid rgba(168,85,247,0.3);
-          border-radius: 999px; padding: 8px 18px; font-size: 13px; font-weight: 600;
-          color: #d8b4fe; margin-bottom: 22px;
-        }
-        .ostadi-hero-title { font-size: 38px; font-weight: 900; line-height: 1.15; letter-spacing: -1.5px; margin: 0 0 26px; }
-        @media (min-width: 640px) { .ostadi-hero-title { font-size: 48px; } }
-        .ostadi-text-white { color: white; }
-        .ostadi-text-gradient { background: linear-gradient(135deg, #FF8C00, #FFB347); -webkit-background-clip: text; background-clip: text; color: transparent; }
-
-        /* ── Barre de recherche principale ── */
-        .ostadi-search-main {
-          display: flex; align-items: center; gap: 8px;
-          background: linear-gradient(145deg, rgba(20,8,45,0.95), rgba(15,5,30,0.95));
-          border: 1px solid rgba(124,58,237,0.35); border-radius: 16px;
-          padding: 8px 8px 8px 16px; max-width: 700px; margin: 0 auto;
-          box-shadow: 0 12px 40px rgba(124,58,237,0.15);
-        }
-        .ostadi-search-icon { color: #a78bfa; flex-shrink: 0; }
-        .ostadi-search-input-main {
-          flex: 1; background: transparent; border: none; outline: none;
-          color: white; font-size: 14.5px; font-family: inherit; padding: 10px 0;
-        }
-        .ostadi-search-input-main::placeholder { color: #6d28d9; }
-        .ostadi-search-clear {
-          background: rgba(124,58,237,0.2); border: none; color: #a78bfa;
-          width: 26px; height: 26px; border-radius: 8px; cursor: pointer;
-          display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-        }
-        .ostadi-filter-toggle {
-          display: flex; align-items: center; gap: 6px; flex-shrink: 0;
-          background: rgba(124,58,237,0.2); border: 1px solid rgba(168,85,247,0.3);
-          color: #c4b5fd; font-weight: 700; font-size: 13px;
-          padding: 11px 16px; border-radius: 12px; cursor: pointer; transition: all 0.2s ease;
-        }
-        .ostadi-filter-toggle:hover { background: rgba(124,58,237,0.3); }
-        .ostadi-filter-toggle-active { background: #FF8C00; border-color: #FF8C00; color: white; }
-        .ostadi-filter-toggle-label { display: none; }
-        @media (min-width: 560px) { .ostadi-filter-toggle-label { display: inline; } }
-        .ostadi-filter-count {
-          background: rgba(255,255,255,0.25); color: white; font-size: 10px; font-weight: 800;
-          min-width: 18px; height: 18px; border-radius: 999px;
-          display: flex; align-items: center; justify-content: center; padding: 0 5px;
-        }
-
-        /* ── Panneau filtres ── */
-        .ostadi-filters-panel {
-          background: linear-gradient(145deg, rgba(20,8,45,0.95), rgba(15,5,30,0.95));
-          border: 1px solid rgba(124,58,237,0.3); border-radius: 16px;
-          padding: 18px; max-width: 700px; margin: 12px auto 0; text-align: left;
-          animation: slideDown 0.25s ease;
-        }
-        @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-        .ostadi-filters-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-        @media (min-width: 560px) { .ostadi-filters-grid { grid-template-columns: 1fr 1fr; } }
-        @media (min-width: 860px) { .ostadi-filters-grid { grid-template-columns: 1fr 1fr 1fr; } }
-        .ostadi-filter-field { display: flex; flex-direction: column; gap: 6px; }
-        .ostadi-filter-label {
-          display: flex; align-items: center; gap: 5px;
-          color: #a78bfa; font-size: 11.5px; font-weight: 700;
-          text-transform: uppercase; letter-spacing: 0.4px;
-        }
-        .ostadi-filter-input {
-          width: 100%; background: rgba(26,10,60,0.7); border: 1px solid rgba(124,58,237,0.25);
-          border-radius: 10px; padding: 9px 11px; font-size: 13px; color: white;
-          outline: none; font-family: inherit; box-sizing: border-box; transition: border-color 0.2s ease;
-        }
-        .ostadi-filter-input:focus { border-color: rgba(255,140,0,0.5); }
-        .ostadi-filter-input::placeholder { color: #6d28d9; }
-
-        .ostadi-stars-row { display: flex; gap: 6px; flex-wrap: wrap; }
-        .ostadi-star-chip {
-          background: rgba(26,10,60,0.7); border: 1px solid rgba(124,58,237,0.25);
-          color: #a78bfa; font-size: 12px; font-weight: 600;
-          padding: 7px 13px; border-radius: 9px; cursor: pointer; transition: all 0.2s ease;
-        }
-        .ostadi-star-chip-active { background: rgba(255,140,0,0.18); border-color: #FF8C00; color: #FF8C00; }
-
-        .ostadi-reset-all {
-          display: flex; align-items: center; gap: 6px; margin-top: 14px;
-          background: transparent; border: 1px solid rgba(239,68,68,0.3);
-          color: #f87171; font-size: 12px; font-weight: 600;
-          padding: 8px 14px; border-radius: 9px; cursor: pointer; transition: all 0.2s ease;
-        }
-        .ostadi-reset-all:hover { background: rgba(239,68,68,0.1); }
-
-        .ostadi-stats-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 28px; }
-        .ostadi-stat-pill {
-          display: flex; align-items: center; gap: 7px;
-          background: rgba(124,58,237,0.08); border: 1px solid rgba(124,58,237,0.18);
-          border-radius: 999px; padding: 8px 15px;
-        }
-        .ostadi-stat-icon { color: #FF8C00; display: flex; }
-        .ostadi-stat-value { color: white; font-weight: 800; font-size: 13px; }
-        .ostadi-stat-label { color: #a78bfa; font-size: 12px; }
-
-        .ostadi-section { max-width: 1152px; margin: 0 auto; padding: 32px 16px; }
-        .ostadi-section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-        .ostadi-section-icon-badge {
-          width: 34px; height: 34px; border-radius: 10px;
-          background: linear-gradient(135deg, rgba(255,140,0,0.2), rgba(255,140,0,0.05));
-          display: flex; align-items: center; justify-content: center;
-        }
-        .ostadi-section-title { font-size: 20px; font-weight: 800; color: white; letter-spacing: -0.3px; }
-
-        .ostadi-results-header {
-          display: flex; align-items: flex-end; justify-content: space-between;
-          gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
-        }
-        .ostadi-results-sub { color: #8b7bb8; font-size: 12.5px; margin: 3px 0 0; }
-        .ostadi-sort-wrap {
-          display: flex; align-items: center; gap: 8px;
-          background: rgba(20,8,45,0.8); border: 1px solid rgba(124,58,237,0.25);
-          border-radius: 11px; padding: 8px 12px;
-        }
-        .ostadi-sort-select {
-          background: transparent; border: none; outline: none;
-          color: white; font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer;
-        }
-        .ostadi-sort-select option { background: #150A2E; }
-
-        .ostadi-active-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 18px; }
-        .ostadi-chip {
-          display: inline-flex; align-items: center; gap: 6px;
-          background: rgba(255,140,0,0.13); border: 1px solid rgba(255,140,0,0.3);
-          color: #FF8C00; font-size: 12px; font-weight: 600;
-          padding: 5px 10px; border-radius: 999px;
-        }
-        .ostadi-chip button {
-          background: none; border: none; color: #FF8C00; cursor: pointer;
-          display: flex; align-items: center; padding: 0;
-        }
-
-        .ostadi-classes-grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-        @media (min-width: 640px) { .ostadi-classes-grid { grid-template-columns: 1fr 1fr; } }
-        @media (min-width: 1024px) { .ostadi-classes-grid { grid-template-columns: 1fr 1fr 1fr; } }
-
-        .ostadi-skeleton-card {
-          background: rgba(124,58,237,0.06); border: 1px solid rgba(124,58,237,0.12);
-          border-radius: 16px; padding: 20px;
-        }
-        .ostadi-skeleton-line {
-          background: linear-gradient(90deg, rgba(124,58,237,0.1) 25%, rgba(124,58,237,0.25) 50%, rgba(124,58,237,0.1) 75%);
-          background-size: 200% 100%; border-radius: 6px; animation: shimmer 1.6s ease-in-out infinite;
-        }
-        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-
-        .ostadi-empty-state { text-align: center; padding: 60px 20px; }
-        .ostadi-empty-icon {
-          width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 16px;
-          background: rgba(124,58,237,0.1); display: flex; align-items: center; justify-content: center; color: #7c3aed;
-        }
-        .ostadi-empty-title { color: #d8b4fe; font-weight: 700; font-size: 15.5px; margin-bottom: 6px; }
-        .ostadi-empty-hint { color: #8b7bb8; font-size: 13.5px; }
-
-        .ostadi-cta-section { position: relative; overflow: hidden; margin-top: 20px; border-top: 1px solid rgba(124,58,237,0.15); padding: 60px 16px; text-align: center; }
-        .ostadi-cta-glow { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); width: 500px; height: 300px; background: radial-gradient(ellipse, rgba(255,140,0,0.08), transparent 70%); pointer-events: none; }
-        .ostadi-cta-inner { position: relative; max-width: 560px; margin: 0 auto; }
-        .ostadi-cta-title { font-size: 28px; font-weight: 900; color: white; margin: 0 0 12px; }
-        .ostadi-cta-subtitle { color: #a78bfa; font-size: 15px; margin-bottom: 28px; }
-        .ostadi-cta-btn {
-          display: inline-flex; align-items: center; gap: 8px;
-          background: linear-gradient(135deg, #FF8C00, #FF6B00); color: white; font-weight: 800;
-          padding: 15px 32px; border-radius: 14px; text-decoration: none; font-size: 15px;
-          box-shadow: 0 10px 30px rgba(255,140,0,0.35); transition: all 0.25s ease;
-        }
-        .ostadi-cta-btn:hover { transform: translateY(-3px) scale(1.03); }
-      `}</style>
+        <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '4px' }}>{label}</div>
+      </div>
     </div>
   );
 }
 
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+export default function DashboardPage() {
+  const { user, profile, loading, refreshProfile } = useAuth();
+  const { isRTL } = useLang();
+  const router = useRouter();
+  const toast = useToast();
+  const [classes, setClasses] = useState<Classe[]>([]);
+  const [stats, setStats] = useState({ totalClasses: 0, totalStudents: 0, totalAttendance: 0, attendanceRate: 0 });
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [selectedClasse, setSelectedClasse] = useState<Classe | null>(null);
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"cours" | "stats" | "revenus" | "profil">("cours");
+  const [editingClasse, setEditingClasse] = useState<Classe | null>(null);
+  const [duplicating, setDuplicating] = useState<Classe | null>(null);
+
+  const [form, setForm] = useState({
+    title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "",
+    durationMinutes: 60, price: 500, priceType: "session" as "session" | "monthly",
+    description: "", whatsapp: "", wilaya: "Alger",
+    maxStudents: undefined as number | undefined,
+  });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<string[]>([]);
+  const [addPhone, setAddPhone] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addingStudent, setAddingStudent] = useState(false);
+  const [addError, setAddError] = useState("");
+
+  useEffect(() => {
+    if (!loading && (!user || profile?.role !== "teacher")) router.push("/auth");
+  }, [user, profile, loading, router]);
+
+  useEffect(() => {
+    if (user && profile?.role === "teacher") loadData();
+  }, [user, profile]);
+
+  async function loadData() {
+    setLoadingData(true);
+    try {
+      await autoArchiveFinishedClasses();
+      const [cls, st] = await Promise.all([
+        getClasses({ teacherId: user!.uid }),
+        getTeacherStats(user!.uid),
+      ]);
+      setClasses(cls);
+      setStats(st);
+    } finally {
+      setLoadingData(false);
+    }
+  }
+
+  async function handleCreate() {
+    setCreateError(null);
+    const isMonthly = form.priceType === "monthly";
+
+    if (!form.title) return;
+
+    // Un cours mensuel se définit par ses séances, pas par une date unique
+    if (isMonthly) {
+      if (sessions.length === 0) {
+        setCreateError(
+          isRTL
+            ? "حدّد موعد حصة واحدة على الأقل."
+            : "Définissez au moins une séance."
+        );
+        return;
+      }
+    } else if (!form.dateTime) {
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const jitsiRoom = generateJitsiRoom(profile!.displayName, form.title);
+      await createClasse({
+        ...form,
+        /**
+         * ⚠️ Normalisation obligatoire.
+         *
+         * Un <input type="datetime-local"> renvoie « 2026-08-18T17:00 »,
+         * sans fuseau. Stockée telle quelle, cette chaîne était lue
+         * comme heure locale par le navigateur du prof (Algérie) mais
+         * comme UTC par le serveur Vercel — une heure d'écart, et la
+         * salle qui refusait d'ouvrir à l'heure dite.
+         *
+         * On convertit en instant absolu avant d'écrire. Plus aucune
+         * ambiguïté possible, où que le code s'exécute.
+         */
+        dateTime: isMonthly ? sessions[0] : toAbsoluteISO(form.dateTime),
+        // Firestore rejette `undefined` : on omet le champ au lieu
+        // de l'envoyer vide pour les cours à la séance
+        ...(isMonthly ? { sessions } : {}),
+        // Firestore rejette undefined — on omet le champ s'il est vide
+        ...(form.maxStudents ? { maxStudents: form.maxStudents } : {}),
+        teacherId: user!.uid,
+        teacherName: profile!.displayName,
+        // Photo dupliquée ici pour éviter une lecture Firestore
+        // supplémentaire à chaque affichage de carte de cours
+        teacherPhoto: (profile as any)?.photoURL || "",
+        // Un prof jamais noté a rating undefined — Firestore le refuse
+        teacherRating: profile?.rating ?? 0,
+        jitsiRoom,
+        enrolledCount: 0,
+        attendanceCount: 0,
+        viewCount: 0,
+        status: "scheduled",
+        createdAt: new Date().toISOString(),
+      });
+      setShowCreateModal(false);
+      toast.success(isRTL ? "تم إنشاء الدرس" : "Cours créé");
+      setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger", maxStudents: undefined });
+      setSessions([]);
+      await loadData();
+    } catch (err: any) {
+      // Sans catch, un échec fermait le modal comme si tout allait bien
+      console.error("Création du cours échouée :", err);
+      const msg = err?.code === "permission-denied"
+        ? (isRTL ? "ليست لديك صلاحية إنشاء درس." : "Vous n'avez pas le droit de créer un cours.")
+        : (isRTL ? "فشل إنشاء الدرس. حاول مرة أخرى." : "Échec de la création. Réessayez.");
+      setCreateError(msg);
+      toast.error(msg);
+      return;
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function openStudents(classe: Classe) {
+    setSelectedClasse(classe);
+    const enr = await getEnrollmentsByClasse(classe.id);
+    setEnrollments(enr);
+    setAddError(""); setAddPhone(""); setAddName("");
+  }
+
+  async function handleAddStudent() {
+    if (!addPhone || !addName || !selectedClasse) { setAddError(isRTL ? "الاسم والهاتف مطلوبان." : "Nom et téléphone requis."); return; }
+    setAddingStudent(true);
+    setAddError("");
+    try {
+      await enrollStudent({
+        classeId: selectedClasse.id,
+        studentId: addPhone,
+        studentName: addName,
+        studentPhone: addPhone,
+        addedByTeacher: true,
+        attended: false,
+        enrolledAt: new Date().toISOString(),
+      });
+      const enr = await getEnrollmentsByClasse(selectedClasse.id);
+      setEnrollments(enr);
+      setAddPhone(""); setAddName("");
+      toast.success(isRTL ? "تمت إضافة الطالب" : "Élève ajouté");
+      await loadData();
+    } catch { setAddError(isRTL ? "خطأ أثناء الإضافة." : "Erreur lors de l'ajout."); }
+    finally { setAddingStudent(false); }
+  }
+
+  function copyLink(id: string) {
+    navigator.clipboard.writeText(`${window.location.origin}/classe/${id}`);
+    haptic("success");
+    setCopied(id);
+    setTimeout(() => setCopied(null), 2000);
+  }
+
+  function formatDate(iso: string) {
+    return formatDateLocal(iso, isRTL);
+  }
+
+  if (loading || loadingData) return (
+    <div style={{ minHeight: '100vh', padding: '32px 16px' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+        <div className="os-skeleton" style={{ height: 30, width: 240, marginBottom: 28 }} />
+        <StatsSkeleton count={4} />
+      </div>
+    </div>
+  );
+
+  const inputStyle = { width: '100%', background: '#1A0A3C', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '12px', padding: '12px', fontSize: '14px', color: 'white', outline: 'none', boxSizing: 'border-box' as const };
+  const labelStyle = { display: 'block', fontSize: '13px', fontWeight: 600, color: 'rgba(196,181,253,0.8)', marginBottom: '6px' };
+  const smallBtn = { display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit' };
+
   return (
-    <span className="ostadi-chip">
-      {label}
-      <button onClick={onRemove}><X size={12} /></button>
-    </span>
+    // Sans `dir`, la mise en page reste en sens français même quand
+    // l'interface passe en arabe : les marges, les alignements et les
+    // icônes directionnelles pointent du mauvais côté.
+    <div style={{ minHeight: '100vh' }} dir={isRTL ? 'rtl' : 'ltr'}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 16px' }}>
+
+        {/* Header */}
+        <Sequence>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '28px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#FF8C00', boxShadow: '0 0 10px #FF8C00' }} />
+              <span style={{ color: '#a78bfa', fontSize: '13px', fontWeight: 600, letterSpacing: '2px', textTransform: 'uppercase' }}>
+                {isRTL ? "لوحة الأستاذ" : "Dashboard Professeur"}
+              </span>
+            </div>
+            <h1 style={{ fontSize: '28px', fontWeight: 900, color: 'white', margin: 0, letterSpacing: '-0.6px' }}>
+              {isRTL ? "مرحباً، " : "Bonjour, "}
+              <span style={{ color: '#FF8C00' }}>{profile?.displayName}</span> 👋
+            </h1>
+          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="os-btn-chalk"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px', fontSize: '14px' }}
+          >
+            <Plus style={{ width: '18px', height: '18px' }} />
+            {isRTL ? "درس جديد" : "Nouveau cours"}
+          </button>
+        </div>
+
+        {/* Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+          <StatCard label={isRTL ? "دروس منشأة" : "Cours créés"} value={stats.totalClasses} icon={<BookOpen style={{ width: '22px', height: '22px', color: '#a78bfa' }} />} color="rgba(88,28,135,0.5)" />
+          <StatCard label={isRTL ? "طلاب مسجّلون" : "Élèves inscrits"} value={stats.totalStudents} icon={<Users style={{ width: '22px', height: '22px', color: '#60a5fa' }} />} color="rgba(29,78,216,0.3)" />
+          <StatCard label={isRTL ? "الحضور" : "Présences"} value={stats.totalAttendance} icon={<CheckCircle style={{ width: '22px', height: '22px', color: '#34d399' }} />} color="rgba(6,78,59,0.4)" />
+          <StatCard label={isRTL ? "نسبة الحضور" : "Taux présence"} value={`${stats.attendanceRate}%`} icon={<TrendingUp style={{ width: '22px', height: '22px', color: '#FF8C00' }} />} color="rgba(194,65,12,0.3)" />
+        </div>
+        </Sequence>
+
+        {/* Banners */}
+        {!profile?.subscriptionActive && (
+          <div style={{ background: 'linear-gradient(135deg, rgba(255,140,0,0.15), rgba(88,28,135,0.2))', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '16px', padding: '16px 20px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <Star style={{ width: '24px', height: '24px', color: '#FF8C00', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontWeight: 700, color: 'white', fontSize: '15px' }}>
+                  {isRTL ? "اشترك كأستاذ مميز ⭐" : "Passez en Abonnement Professeur ⭐"}
+                </div>
+                <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>
+                  {isRTL
+                    ? "تظهر في مقدّمة القائمة وتنشئ دروساً غير محدودة — 2000 دج/شهر"
+                    : "Apparaissez en tête de liste et créez des cours illimités — 2 000 DA/mois"}
+                </div>
+              </div>
+            </div>
+            <Link href="/abonnement" style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '10px 18px', borderRadius: '12px', textDecoration: 'none', fontSize: '14px', flexShrink: 0 }}>
+              {isRTL ? "← اشترك" : "S'abonner →"}
+            </Link>
+          </div>
+        )}
+
+        {profile?.verificationStatus !== "approved" && !profile?.diplomaVerified && (
+          <div style={{ background: 'rgba(88,28,135,0.2)', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '16px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <ShieldCheck style={{ width: '24px', height: '24px', color: '#a78bfa', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontWeight: 700, color: 'white', fontSize: '15px' }}>
+                  {profile?.verificationStatus === "pending"
+                    ? (isRTL ? "التوثيق جارٍ ⏳" : "Vérification en cours ⏳")
+                    : (isRTL ? "وثّق ملفك" : "Faites vérifier votre profil")}
+                </div>
+                <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>
+                  {profile?.verificationStatus === "pending"
+                    ? (isRTL ? "ملفك قيد المراجعة." : "Votre dossier est en cours d'examen.")
+                    : (isRTL ? "شارة التوثيق + أولوية في النتائج" : "Badge vérifié + priorité dans les résultats")}
+                </div>
+              </div>
+            </div>
+            {profile?.verificationStatus !== "pending" && (
+              <Link href="/verification" style={{ border: '1px solid rgba(168,85,247,0.5)', color: '#c4b5fd', fontWeight: 700, padding: '10px 18px', borderRadius: '12px', textDecoration: 'none', fontSize: '14px', flexShrink: 0 }}>
+                {isRTL ? "← وثّق" : "Vérifier →"}
+              </Link>
+            )}
+          </div>
+        )}
+
+        {/* ═══ SOLDE DE COMMISSION ═══
+            Placé avant les onglets : le professeur le voit à chaque
+            connexion, sans avoir à chercher dans l'onglet Revenus. */}
+        {user && <CommissionAlert teacherId={user.uid} />}
+
+        {/* ═══ TABS ═══ */}
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '20px', borderBottom: '1px solid rgba(88,28,135,0.3)', paddingBottom: '2px', flexWrap: 'wrap' }}>
+          {[
+            { id: "cours", label: isRTL ? "📚 دروسي" : "📚 Mes cours", count: classes.length },
+            { id: "stats", label: isRTL ? "📊 الأداء" : "📊 Performance", count: null },
+            { id: "revenus", label: isRTL ? "💰 الإيرادات" : "💰 Revenus", count: null },
+            { id: "profil", label: isRTL ? "👤 ملفي" : "👤 Mon profil", count: null },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => { haptic("select"); setActiveTab(tab.id as any); }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                padding: '10px 16px', fontSize: '13.5px', fontWeight: 700,
+                color: activeTab === tab.id ? '#FF8C00' : '#a78bfa',
+                borderBottom: activeTab === tab.id ? '2px solid #FF8C00' : '2px solid transparent',
+                marginBottom: '-2px', transition: 'all 0.2s ease', fontFamily: 'inherit',
+              }}
+            >
+              {tab.label} {tab.count !== null && <span style={{ opacity: 0.7 }}>({tab.count})</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* ═══ TAB: COURS ═══ */}
+        {activeTab === "cours" && (
+          <>
+            {/* Réactivité — le professeur voit son propre score.
+                C'est ce qui change le comportement, pas le chiffre. */}
+            {user && (
+              <div style={{ marginBottom: '16px' }}>
+                <ResponseBadge teacherId={user.uid} variant="self" />
+              </div>
+            )}
+            {user && <EnrollmentRequestsPanel teacherId={user.uid} />}
+            {classes.length === 0 ? (
+              <EmptyState
+                icon={<BookOpen size={28} />}
+                title={isRTL ? "لم تنشئ أي درس بعد" : "Vous n'avez pas encore créé de cours"}
+                hint={isRTL
+                  ? "أول درس يستغرق دقيقتين. الطلاب لن يجدوك قبل ذلك."
+                  : "Le premier prend deux minutes. Les élèves ne peuvent pas vous trouver avant."}
+                action={
+                  <button onClick={() => setShowCreateModal(true)} className="os-btn-chalk" style={{ padding: '11px 22px', fontSize: '13.5px' }}>
+                    Créer mon premier cours
+                  </button>
+                }
+              />
+            ) : (
+              <RevealGroup className="os-stack">
+                {classes.map((c) => (
+                  <div key={c.id} className="os-glass-2 os-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                    <div style={{ width: '4px', height: '60px', borderRadius: '4px', background: c.status === 'live' ? '#ef4444' : '#FF8C00', flexShrink: 0 }} />
+
+                    <div style={{ flex: 1, minWidth: '200px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                        <span style={{ background: 'rgba(88,28,135,0.5)', color: '#c4b5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px', border: '1px solid rgba(126,34,206,0.4)' }}>{trSubject(c.subject, isRTL)}</span>
+                        <span style={{ background: 'rgba(29,78,216,0.2)', color: '#93c5fd', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>{trLevel(c.level, isRTL)}</span>
+                        {(c as any).sessions?.length > 1 && (
+                          <span style={{ background: 'rgba(255,140,0,0.15)', color: '#fdba74', fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px' }}>
+                            📅 {(c as any).sessions.length} {isRTL ? "حصص" : "séances"}
+                          </span>
+                        )}
+                        {c.status === 'live' && <span style={{ background: 'rgba(127,29,29,0.4)', color: '#fca5a5', fontSize: '11px', padding: '3px 10px', borderRadius: '999px', animation: 'pulse 2s infinite' }}>🔴 Live</span>}
+                      </div>
+                      <div style={{ fontWeight: 700, color: 'white', fontSize: '15px', marginBottom: '4px' }}>{c.title}</div>
+                      <div style={{ fontSize: '12px', color: '#a78bfa' }}>
+                        {formatDate(c.dateTime)} · {c.durationMinutes} min · <span style={{ color: '#FF8C00', fontWeight: 700 }}>{c.price.toLocaleString()} DA</span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#6d28d9', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                        <span>👥 {c.enrolledCount} {isRTL ? "مسجّل" : "inscrits"}</span>
+                        <span>✅ {c.attendanceCount} {isRTL ? "حاضر" : "présents"}</span>
+                        {((c as any).viewCount ?? 0) > 0 && <span>👁 {(c as any).viewCount} {isRTL ? "مشاهدة" : "vues"}</span>}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <Link
+                        href={`/classe/${c.id}`}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', background: c.status === 'live' ? '#ef4444' : '#FF8C00', color: 'white', padding: '8px 16px', borderRadius: '10px', textDecoration: 'none', fontSize: '13px', fontWeight: 700, boxShadow: c.status === 'live' ? '0 0 15px rgba(239,68,68,0.4)' : '0 0 15px rgba(255,140,0,0.3)' }}
+                      >
+                        {c.status === 'live'
+                          ? (isRTL ? '🔴 مباشر' : '🔴 En direct')
+                          : (isRTL ? '▶ ابدأ' : '▶ Démarrer')}
+                      </Link>
+                      <button onClick={() => setEditingClasse(c)} style={smallBtn}>
+                        <Pencil style={{ width: '14px', height: '14px' }} /> {isRTL ? "تعديل" : "Modifier"}
+                      </button>
+                      {/* Reconduction — reprend tout sauf les dates */}
+                      <button onClick={() => setDuplicating(c)} style={smallBtn} title={isRTL ? "إعادة نشر" : "Reconduire"}>
+                        <CopyPlus style={{ width: '14px', height: '14px' }} /> {isRTL ? "إعادة نشر" : "Reconduire"}
+                      </button>
+                      <button onClick={() => openStudents(c)} style={smallBtn}>
+                        <Users style={{ width: '14px', height: '14px' }} /> {isRTL ? "الطلاب" : "Élèves"}
+                      </button>
+                      <Link href={`/chat/${c.id}`} style={{ ...smallBtn, textDecoration: 'none' }}>
+                        <MessageCircle style={{ width: '14px', height: '14px' }} /> {isRTL ? "محادثة" : "Chat"}
+                      </Link>
+                      <button
+                        onClick={() => copyLink(c.id)}
+                        style={{ ...smallBtn, color: copied === c.id ? '#34d399' : '#c4b5fd', background: copied === c.id ? 'rgba(6,78,59,0.3)' : 'transparent', transition: '0.2s' }}
+                      >
+                        {copied === c.id ? <CheckCircle style={{ width: '14px', height: '14px' }} /> : <Copy style={{ width: '14px', height: '14px' }} />}
+                        {copied === c.id
+                          ? (isRTL ? 'تم النسخ!' : 'Copié !')
+                          : (isRTL ? 'رابط' : 'Lien')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </RevealGroup>
+            )}
+          </>
+        )}
+
+        {/* ═══ TAB: PERFORMANCE ═══ */}
+        {activeTab === "stats" && user && (
+          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '20px' }}>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '9px', color: 'white', fontWeight: 800, fontSize: '15px', margin: '0 0 4px' }}>
+              <BarChart3 style={{ width: '17px', height: '17px', color: '#FF8C00' }} />
+              {isRTL ? "أداء إعلاناتك" : "Performance de vos annonces"}
+            </h2>
+            <p style={{ color: '#6d28d9', fontSize: '11.5px', margin: '0 0 16px' }}>
+              {isRTL
+                ? "من المشاهدة إلى التسجيل — اعرف أين تفقد الطلاب."
+                : "De la vue à l'inscription — voyez où vous perdez des élèves."}
+            </p>
+            <ClasseStats teacherId={user.uid} />
+          </div>
+        )}
+
+        {/* ═══ TAB: REVENUS ═══ */}
+        {activeTab === "revenus" && user && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <TeacherRevenue teacherId={user.uid} />
+            {profile && (
+              <BilanDownload
+                teacherId={user.uid}
+                teacherName={profile.displayName}
+              />
+            )}
+          </div>
+        )}
+
+        {/* ═══ TAB: PROFIL ═══ */}
+        {activeTab === "profil" && user && profile && (
+          <TeacherProfileForm
+            uid={user.uid}
+            currentData={{
+              photoURL: (profile as any).photoURL,
+              wilaya: profile.wilaya,
+              diploma: (profile as any).diploma,
+              university: (profile as any).university,
+              yearsExperience: (profile as any).yearsExperience,
+              bio: (profile as any).bio,
+            }}
+            onSaved={refreshProfile}
+          />
+        )}
+      </div>
+
+      {/* ═══ CRÉATION — feuille glissante ═══
+          Sur mobile, elle se saisit par le haut et suit le doigt.
+          Un formulaire long dans un modal centré oblige à viser une
+          petite croix ; ici, un geste vers le bas suffit. */}
+      <Sheet
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={isRTL ? "إنشاء درس" : "Créer un cours"}
+        subtitle={isRTL ? "املأ معلومات الدرس" : "Remplissez les informations du cours"}
+      >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>{isRTL ? "عنوان الدرس *" : "Titre du cours *"}</label>
+                <input style={inputStyle} placeholder={isRTL ? "مثال: مراجعة بكالوريا رياضيات" : "Ex: Révision Bac Maths série S"} value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "المادة" : "Matière"}</label>
+                  <select style={inputStyle} value={form.subject} onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}>
+                    {SUBJECTS.map(s => <option key={s} value={s} style={{ background: '#1A0A3C' }}>{trSubject(s, isRTL)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "المستوى" : "Niveau"}</label>
+                  <select style={inputStyle} value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))}>
+                    {LEVELS.map(l => <option key={l} value={l} style={{ background: '#1A0A3C' }}>{trLevel(l, isRTL)}</option>)}
+                  </select>
+                </div>
+              </div>
+              {form.priceType !== "monthly" && (
+                <div>
+                  <label style={labelStyle}>{isRTL ? "التاريخ والوقت *" : "Date et heure *"}</label>
+                  <input style={inputStyle} type="datetime-local" value={form.dateTime} onChange={e => setForm(f => ({ ...f, dateTime: e.target.value }))} />
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "المدة (د)" : "Durée (min)"}</label>
+                  <input style={inputStyle} type="number" value={form.durationMinutes} onChange={e => setForm(f => ({ ...f, durationMinutes: +e.target.value }))} />
+                </div>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "السعر (دج)" : "Prix (DA)"}</label>
+                  <input style={inputStyle} type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: +e.target.value }))} />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "نوع السعر" : "Type de prix"}</label>
+                  <select style={inputStyle} value={form.priceType} onChange={e => setForm(f => ({ ...f, priceType: e.target.value as "session" | "monthly" }))}>
+                    <option value="session" style={{ background: '#1A0A3C' }}>{isRTL ? "بالحصة" : "Par séance"}</option>
+                    <option value="monthly" style={{ background: '#1A0A3C' }}>{isRTL ? "بالشهر" : "Par mois"}</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={labelStyle}>{isRTL ? "الولاية" : "Wilaya"}</label>
+                  <select style={inputStyle} value={form.wilaya} onChange={e => setForm(f => ({ ...f, wilaya: e.target.value }))}>
+                    {WILAYAS.map(w => <option key={w} value={w} style={{ background: '#1A0A3C' }}>{trWilaya(w, isRTL)}</option>)}
+                  </select>
+                </div>
+              </div>
+              {form.priceType === "monthly" && (
+                <div>
+                  <label style={labelStyle}>
+                    {isRTL ? "مواعيد الحصص *" : "Dates des séances *"}
+                  </label>
+                  <p style={{ color: '#6d28d9', fontSize: '11px', margin: '0 0 8px', lineHeight: 1.5 }}>
+                    {isRTL
+                      ? "يسجّل الطالب مرة واحدة ويحضر كل الحصص."
+                      : "L'élève s'inscrit une seule fois et accède à toutes les séances."}
+                  </p>
+                  <SessionsPicker value={sessions} onChange={setSessions} />
+                </div>
+              )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>WhatsApp</label>
+                  <input style={inputStyle} placeholder="213XXXXXXXXX" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={labelStyle}>
+                    {isRTL ? "عدد المقاعد" : "Places disponibles"}
+                  </label>
+                  <input
+                    style={inputStyle}
+                    type="number"
+                    min={1}
+                    placeholder={isRTL ? "بدون حد" : "Sans limite"}
+                    value={form.maxStudents ?? ""}
+                    onChange={e => setForm(f => ({
+                      ...f,
+                      maxStudents: e.target.value ? Number(e.target.value) : undefined,
+                    }))}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>{isRTL ? "الوصف" : "Description"}</label>
+                <textarea style={{ ...inputStyle, resize: 'none' }} rows={3} placeholder={isRTL ? "صف درسك..." : "Décrivez votre cours..."} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+              </div>
+              {createError && (
+                <div style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '9px',
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: '12px', padding: '11px 13px',
+                }}>
+                  <span style={{ color: '#f87171', flexShrink: 0, fontSize: '14px', lineHeight: 1.2 }}>⚠</span>
+                  <span style={{ color: '#fca5a5', fontSize: '12.5px', flex: 1, lineHeight: 1.5 }}>
+                    {createError}
+                  </span>
+                  <button
+                    onClick={() => setCreateError(null)}
+                    style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: 0, fontSize: '13px' }}
+                  >✕</button>
+                </div>
+              )}
+              <button
+                onClick={handleCreate}
+                disabled={creating || !form.title || (form.priceType === "monthly" ? sessions.length === 0 : !form.dateTime)}
+                style={{ width: '100%', background: creating || !form.title || (form.priceType === "monthly" ? sessions.length === 0 : !form.dateTime) ? 'rgba(255,140,0,0.4)' : '#FF8C00', color: 'white', fontWeight: 800, padding: '14px', borderRadius: '14px', border: 'none', cursor: creating ? 'not-allowed' : 'pointer', fontSize: '15px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                {creating ? (
+                  <><div style={{ width: '16px', height: '16px', border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /> {isRTL ? "جارٍ الإنشاء..." : "Création..."}</>
+                ) : (
+                  <><Zap style={{ width: '16px', height: '16px' }} /> {isRTL ? "إنشاء الدرس" : "Créer le cours"}</>
+                )}
+              </button>
+            </div>
+      </Sheet>
+
+      {/* ═══ ÉLÈVES ET PAIEMENTS ═══ */}
+      <Sheet
+        open={!!selectedClasse}
+        onClose={() => setSelectedClasse(null)}
+        title={isRTL ? "الطلاب والمدفوعات" : "Élèves & paiements"}
+        subtitle={selectedClasse?.title}
+      >
+        {selectedClasse && (
+          <>
+
+            {/* ═══ SUIVI DES ENCAISSEMENTS ═══ */}
+            <div style={{ marginBottom: '16px' }}>
+              <StudentPayments
+                classeId={selectedClasse.id}
+                classePrice={selectedClasse.price}
+                classeTitle={selectedClasse.title}
+              />
+            </div>
+
+            {/* ═══ PRÉSENCE RÉELLE ═══
+                Qui est venu, combien de temps. Ce que « présent »
+                ne disait pas. */}
+            <div style={{ marginBottom: '16px' }}>
+              <AttendanceReport
+                classeId={selectedClasse.id}
+                classeDuration={selectedClasse.durationMinutes}
+                isTeacher={true}
+              />
+            </div>
+
+            {/* ═══ SUIVI DE PROGRESSION ═══
+                Ce qui donne au parent une raison concrète de renouveler. */}
+            {user && (
+              <div style={{ marginBottom: '20px' }}>
+                <ProgressTracker
+                  classeId={selectedClasse.id}
+                  teacherId={user.uid}
+                  isTeacher={true}
+                />
+              </div>
+            )}
+
+            {/* ═══ AJOUT MANUEL ═══ */}
+            <div style={{ background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '14px', padding: '16px' }}>
+              <p style={{ fontSize: '12px', color: '#fdba74', marginBottom: '12px', fontWeight: 600 }}>
+                {isRTL
+                  ? "⚠️ بإضافة طالب، تؤكّد أنك استلمت دفعته."
+                  : "⚠️ En ajoutant un élève, vous confirmez avoir reçu son paiement."}
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <input style={inputStyle} placeholder={isRTL ? "اسم الطالب" : "Nom de l'élève"} value={addName} onChange={e => setAddName(e.target.value)} />
+                <input style={inputStyle} placeholder={isRTL ? "رقم الهاتف" : "Numéro de téléphone"} value={addPhone} onChange={e => setAddPhone(e.target.value)} />
+                {addError && <p style={{ color: '#f87171', fontSize: '12px', margin: 0 }}>{addError}</p>}
+                <button
+                  onClick={handleAddStudent}
+                  disabled={addingStudent}
+                  style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', fontSize: '14px' }}
+                >
+                  {addingStudent
+                    ? (isRTL ? "جارٍ الإضافة..." : "Ajout...")
+                    : (isRTL ? "+ إضافة الطالب" : "+ Ajouter l'élève")}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </Sheet>
+
+      {/* Edit / Delete modal */}
+      {editingClasse && (
+        <EditClasseModal
+          classe={editingClasse}
+          onClose={() => setEditingClasse(null)}
+          onSaved={loadData}
+          onDeleted={loadData}
+        />
+      )}
+
+      {/* Reconduction */}
+      {duplicating && (
+        <DuplicateClasseModal
+          classe={duplicating}
+          onClose={() => setDuplicating(null)}
+          onDone={loadData}
+        />
+      )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      `}</style>
+    </div>
   );
 }
