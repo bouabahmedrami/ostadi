@@ -20,6 +20,9 @@ import ClasseStats from "@/components/ClasseStats";
 import StudentPayments from "@/components/StudentPayments";
 import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
 import { StatsSkeleton, PageLoader, EmptyState } from "@/components/Skeletons";
+import Sheet from "@/components/Sheet";
+import { useToast } from "@/components/Toast";
+import { haptic } from "@/lib/haptics";
 import ResponseBadge from "@/components/ResponseBadge";
 import ProgressTracker from "@/components/ProgressTracker";
 
@@ -48,6 +51,7 @@ export default function DashboardPage() {
   const { user, profile, loading, refreshProfile } = useAuth();
   const { isRTL } = useLang();
   const router = useRouter();
+  const toast = useToast();
   const [classes, setClasses] = useState<Classe[]>([]);
   const [stats, setStats] = useState({ totalClasses: 0, totalStudents: 0, totalAttendance: 0, attendanceRate: 0 });
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -144,17 +148,18 @@ export default function DashboardPage() {
         createdAt: new Date().toISOString(),
       });
       setShowCreateModal(false);
+      toast.success(isRTL ? "تم إنشاء الدرس" : "Cours créé");
       setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger", maxStudents: undefined });
       setSessions([]);
       await loadData();
     } catch (err: any) {
       // Sans catch, un échec fermait le modal comme si tout allait bien
       console.error("Création du cours échouée :", err);
-      setCreateError(
-        err?.code === "permission-denied"
-          ? (isRTL ? "ليست لديك صلاحية إنشاء درس." : "Vous n'avez pas le droit de créer un cours.")
-          : (isRTL ? "فشل إنشاء الدرس. حاول مرة أخرى." : "Échec de la création. Réessayez.")
-      );
+      const msg = err?.code === "permission-denied"
+        ? (isRTL ? "ليست لديك صلاحية إنشاء درس." : "Vous n'avez pas le droit de créer un cours.")
+        : (isRTL ? "فشل إنشاء الدرس. حاول مرة أخرى." : "Échec de la création. Réessayez.");
+      setCreateError(msg);
+      toast.error(msg);
       return;
     } finally {
       setCreating(false);
@@ -185,6 +190,7 @@ export default function DashboardPage() {
       const enr = await getEnrollmentsByClasse(selectedClasse.id);
       setEnrollments(enr);
       setAddPhone(""); setAddName("");
+      toast.success(isRTL ? "تمت إضافة الطالب" : "Élève ajouté");
       await loadData();
     } catch { setAddError(isRTL ? "خطأ أثناء الإضافة." : "Erreur lors de l'ajout."); }
     finally { setAddingStudent(false); }
@@ -192,6 +198,7 @@ export default function DashboardPage() {
 
   function copyLink(id: string) {
     navigator.clipboard.writeText(`${window.location.origin}/classe/${id}`);
+    haptic("success");
     setCopied(id);
     setTimeout(() => setCopied(null), 2000);
   }
@@ -316,7 +323,7 @@ export default function DashboardPage() {
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => { haptic("select"); setActiveTab(tab.id as any); }}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',
                 padding: '10px 16px', fontSize: '13.5px', fontWeight: 700,
@@ -467,24 +474,16 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Create modal */}
-      {showCreateModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="os-glass-3" style={{ width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <div>
-                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>
-                  {isRTL ? "إنشاء درس" : "Créer un cours"}
-                </h2>
-                <p style={{ color: '#a78bfa', fontSize: '13px', margin: '4px 0 0' }}>
-                  {isRTL ? "املأ معلومات الدرس" : "Remplissez les informations du cours"}
-                </p>
-              </div>
-              <button onClick={() => setShowCreateModal(false)} style={{ background: 'rgba(88,28,135,0.3)', border: 'none', borderRadius: '10px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#a78bfa' }}>
-                <X style={{ width: '18px', height: '18px' }} />
-              </button>
-            </div>
-
+      {/* ═══ CRÉATION — feuille glissante ═══
+          Sur mobile, elle se saisit par le haut et suit le doigt.
+          Un formulaire long dans un modal centré oblige à viser une
+          petite croix ; ici, un geste vers le bas suffit. */}
+      <Sheet
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={isRTL ? "إنشاء درس" : "Créer un cours"}
+        subtitle={isRTL ? "املأ معلومات الدرس" : "Remplissez les informations du cours"}
+      >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={labelStyle}>{isRTL ? "عنوان الدرس *" : "Titre du cours *"}</label>
@@ -603,25 +602,17 @@ export default function DashboardPage() {
                 )}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </Sheet>
 
-      {/* Students modal */}
-      {selectedClasse && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="os-glass-3" style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-              <div>
-                <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>
-                  {isRTL ? "الطلاب والمدفوعات" : "Élèves & paiements"}
-                </h2>
-                <p style={{ color: '#a78bfa', fontSize: '13px', margin: '4px 0 0' }}>{selectedClasse.title}</p>
-              </div>
-              <button onClick={() => setSelectedClasse(null)} style={{ background: 'rgba(88,28,135,0.3)', border: 'none', borderRadius: '10px', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#a78bfa' }}>
-                <X style={{ width: '18px', height: '18px' }} />
-              </button>
-            </div>
+      {/* ═══ ÉLÈVES ET PAIEMENTS ═══ */}
+      <Sheet
+        open={!!selectedClasse}
+        onClose={() => setSelectedClasse(null)}
+        title={isRTL ? "الطلاب والمدفوعات" : "Élèves & paiements"}
+        subtitle={selectedClasse?.title}
+      >
+        {selectedClasse && (
+          <>
 
             {/* ═══ SUIVI DES ENCAISSEMENTS ═══ */}
             <div style={{ marginBottom: '16px' }}>
@@ -666,9 +657,9 @@ export default function DashboardPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
 
       {/* Edit / Delete modal */}
       {editingClasse && (

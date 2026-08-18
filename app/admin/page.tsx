@@ -12,6 +12,10 @@ import {
 } from "@/lib/firestore";
 import TeacherPaymentsPanel from "@/components/TeacherPaymentsPanel";
 import ReportsPanel from "@/components/ReportsPanel";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import { useToast } from "@/components/Toast";
+import { useConfirm } from "@/lib/useOptimistic";
+import { haptic } from "@/lib/haptics";
 import {
   Users, BookOpen, Banknote, TrendingUp, ShieldCheck, Crown, Star,
   AlertTriangle, Eye, Check, X, MapPin, BarChart3, Wallet, UserCheck,
@@ -103,6 +107,8 @@ export default function AdminPage() {
   const { user, loading } = useAuth();
   const { isRTL } = useLang();
   const router = useRouter();
+  const toast = useToast();
+  const { confirm, confirmState, answerConfirm } = useConfirm();
 
   const [stats, setStats] = useState<any>(null);
   const [users, setUsers] = useState<any[]>([]);
@@ -154,13 +160,24 @@ export default function AdminPage() {
   }
 
   async function handleApprove(id: string, teacherId: string, name: string) {
-    if (!window.confirm(
-      isRTL ? `تأكيد توثيق ${name}؟` : `Approuver la vérification de ${name} ?`
-    )) return;
+    const ok = await confirm(
+      isRTL ? `توثيق ${name}؟` : `Approuver ${name} ?`,
+      {
+        message: isRTL
+          ? "سيحصل الأستاذ على شارة التوثيق وأولوية في نتائج البحث."
+          : "Le professeur obtiendra le badge vérifié et une priorité dans les résultats.",
+      }
+    );
+    if (!ok) return;
+
     setActionLoading(id);
-    try { await approveVerification(id, teacherId); await loadAll(); }
-    catch { setError(isRTL ? "فشل التوثيق" : "Échec de l'approbation"); }
-    finally { setActionLoading(null); }
+    try {
+      await approveVerification(id, teacherId);
+      toast.success(isRTL ? "تم التوثيق" : "Profil vérifié");
+      await loadAll();
+    } catch {
+      toast.error(isRTL ? "فشل التوثيق" : "Échec de l'approbation");
+    } finally { setActionLoading(null); }
   }
 
   async function handleReject(id: string, teacherId: string) {
@@ -169,28 +186,42 @@ export default function AdminPage() {
     try {
       await rejectVerification(id, teacherId, rejectReason);
       setRejectingId(null); setRejectReason("");
+      toast.success(isRTL ? "تم الرفض" : "Demande refusée");
       await loadAll();
-    } catch { setError(isRTL ? "فشل الرفض" : "Échec du refus"); }
+    } catch { toast.error(isRTL ? "فشل الرفض" : "Échec du refus"); }
     finally { setActionLoading(null); }
   }
 
   async function handleActivateSub(sub: any) {
-    if (!window.confirm(
-      isRTL
-        ? `تفعيل اشتراك ${sub.teacherName}؟\nالمبلغ: ${sub.amount} دج\nتأكد من استلام الدفع.`
-        : `Activer l'abonnement de ${sub.teacherName} ?\nMontant : ${sub.amount} DA\nVérifiez que le paiement a été reçu.`
-    )) return;
+    const ok = await confirm(
+      isRTL ? `تفعيل اشتراك ${sub.teacherName}؟` : `Activer l'abonnement de ${sub.teacherName} ?`,
+      {
+        message: isRTL
+          ? `المبلغ : ${fmt(sub.amount)} دج\n\nتأكّد من استلام الدفع قبل التفعيل.`
+          : `Montant : ${fmt(sub.amount)} DA\n\nVérifiez que le paiement a bien été reçu avant d'activer.`,
+      }
+    );
+    if (!ok) return;
+
     setActionLoading(sub.id);
-    try { await activateSubscription(sub.id, sub.teacherId, sub.endDate); await loadAll(); }
-    catch { setError(isRTL ? "فشل التفعيل" : "Échec de l'activation"); }
-    finally { setActionLoading(null); }
+    try {
+      await activateSubscription(sub.id, sub.teacherId, sub.endDate);
+      toast.success(isRTL ? "تم التفعيل" : "Abonnement activé");
+      await loadAll();
+    } catch {
+      toast.error(isRTL ? "فشل التفعيل" : "Échec de l'activation");
+    } finally { setActionLoading(null); }
   }
 
   async function handleRejectSub(id: string) {
     setActionLoading(id);
-    try { await rejectSubscription(id); await loadAll(); }
-    catch { setError(isRTL ? "فشل الرفض" : "Échec du rejet"); }
-    finally { setActionLoading(null); }
+    try {
+      await rejectSubscription(id);
+      toast.success(isRTL ? "تم الرفض" : "Abonnement rejeté");
+      await loadAll();
+    } catch {
+      toast.error(isRTL ? "فشل الرفض" : "Échec du rejet");
+    } finally { setActionLoading(null); }
   }
 
   /**
@@ -202,11 +233,15 @@ export default function AdminPage() {
    * que les anciens documents n'ont pas.
    */
   async function runMigration() {
-    if (!window.confirm(
-      isRTL
-        ? "تشغيل ترحيل الرسائل؟\n\nيضيف حقل المشاركين إلى الرسائل القديمة.\nآمن ويمكن تكراره."
-        : "Lancer la migration des messages ?\n\nAjoute le champ participants aux anciens messages.\nSans risque, peut être relancé."
-    )) return;
+    const ok = await confirm(
+      isRTL ? "تشغيل ترحيل الرسائل؟" : "Lancer la migration des messages ?",
+      {
+        message: isRTL
+          ? "يضيف حقل المشاركين إلى الرسائل القديمة.\nآمن، ويمكن تكراره دون خطر."
+          : "Ajoute le champ participants aux anciens messages.\nSans risque, peut être relancé.",
+      }
+    );
+    if (!ok) return;
 
     setMigrating(true);
     setMigrationResult(null);
@@ -360,7 +395,7 @@ export default function AdminPage() {
             return (
               <button
                 key={t.id}
-                onClick={() => setTab(t.id as any)}
+                onClick={() => { haptic("select"); setTab(t.id as any); }}
                 style={{
                   display: "flex", alignItems: "center", gap: 7,
                   background: on ? C.orange : "rgba(124,58,237,0.08)",
@@ -829,6 +864,10 @@ export default function AdminPage() {
           </>
         )}
       </div>
+
+      {/* Confirmations — remplace window.confirm(), qui sur Android
+          affiche le nom du domaine au-dessus du message */}
+      <ConfirmDialog state={confirmState} onAnswer={answerConfirm} />
     </div>
   );
 }

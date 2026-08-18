@@ -8,6 +8,7 @@ import HtmlLangSync from "@/components/HtmlLangSync";
 import ReminderChecker from "@/components/ReminderChecker";
 import InstallPrompt from "@/components/InstallPrompt";
 import { Atmosphere } from "@/components/Motion";
+import { ToastProvider } from "@/components/Toast";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://ostadi.vercel.app";
 
@@ -121,18 +122,29 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LangProvider>
           <HtmlLangSync />
           <BandwidthProvider>
-            <AuthProvider>
+            {/* ═══ MESSAGES ÉPHÉMÈRES ═══
+                Enveloppe AuthProvider, pas l'inverse : les messages
+                doivent survivre à un changement d'utilisateur, et
+                useToast doit être accessible partout en dessous.
+
+                Remplace window.alert(), qui sur Android affiche le nom
+                du domaine au-dessus du texte — « ostadi-eta.vercel.app
+                indique... ». Rien ne rappelle plus brutalement à
+                l'utilisateur qu'il est sur un site web. */}
+            <ToastProvider>
+              <AuthProvider>
               {/* Vérifie les cours à venir et crée les rappels manquants.
                   Ne rend rien à l'écran. Doit rester DANS AuthProvider :
                   il lit l'utilisateur connecté. */}
-              <ReminderChecker />
-              {/* Invitation à installer — n'apparaît qu'après 45 s de navigation */}
-              <InstallPrompt />
-              <Navbar />
-              <main className="ostadi-main" style={{ position: "relative", zIndex: 1 }}>
-                {children}
-              </main>
-            </AuthProvider>
+                <ReminderChecker />
+                {/* Invitation à installer — n'apparaît qu'après 45 s de navigation */}
+                <InstallPrompt />
+                <Navbar />
+                <main className="ostadi-main" style={{ position: "relative", zIndex: 1 }}>
+                  {children}
+                </main>
+              </AuthProvider>
+            </ToastProvider>
           </BandwidthProvider>
         </LangProvider>
       </body>

@@ -15,6 +15,8 @@ import {
 import { trSubject, trLevel, trWilaya } from "@/lib/i18n/translate";
 import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
 import { ClasseGridSkeleton, EmptyState } from "@/components/Skeletons";
+import { ChalkUnderline } from "@/components/Chalk";
+import { haptic } from "@/lib/haptics";
 type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
 
 export default function HomePage() {
@@ -144,9 +146,15 @@ export default function HomePage() {
             {t.home.badge}
           </div>
 
+          {/* ═══ LE TRAIT DE CRAIE ═══
+              Une seule fois sur toute la page. Répété, il devient un
+              motif décoratif et perd le sens qu'il porte : le geste
+              de l'enseignant qui souligne un mot au tableau. */}
           <h1 className="ostadi-hero-title">
             <span className="ostadi-text-white">{t.home.title1} </span>
-            <span className="os-gradient">أستاذي</span>
+            <ChalkUnderline color="#FF8C00" delay={520}>
+              <span className="os-gradient">أستاذي</span>
+            </ChalkUnderline>
             <br />
             <span className="ostadi-text-white">{t.home.title2}</span>
           </h1>
