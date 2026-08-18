@@ -298,10 +298,24 @@ export default function Navbar() {
         .ostadi-verify-close:hover { opacity: 1; }
 
         .ostadi-nav {
-          background: rgba(10,0,20,0.85);
-          backdrop-filter: blur(20px) saturate(180%);
-          border-bottom: 1px solid rgba(124,58,237,0.15);
+          /* Plus translucide qu'avant : on veut voir les halos
+             défiler derrière, sinon la barre reste un bandeau opaque
+             posé sur du verre — l'inverse de l'effet recherché. */
+          background: rgba(14, 5, 30, 0.62);
+          backdrop-filter: blur(22px) saturate(1.7);
+          -webkit-backdrop-filter: blur(22px) saturate(1.7);
+          border-bottom: 1px solid rgba(168, 85, 247, 0.18);
           position: sticky; top: 0; z-index: 100;
+          box-shadow: 0 1px 0 rgba(255, 255, 255, 0.045) inset;
+        }
+        /* Sur petit écran, le flou coûte trop cher en position collante :
+           il se recalcule à chaque image pendant le défilement. */
+        @media (max-width: 480px) {
+          .ostadi-nav {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            background: rgba(14, 5, 30, 0.9);
+          }
         }
         .ostadi-nav-inner {
           max-width: 1152px; margin: 0 auto; padding: 0 16px;
@@ -321,8 +335,16 @@ export default function Navbar() {
         @media (min-width: 768px) { .ostadi-nav-desktop { display: flex; } .ostadi-nav-mobile-controls { display: none !important; } }
 
         .ostadi-nav-link {
-          color: rgba(196,181,253,0.75); text-decoration: none; font-size: 13.5px; font-weight: 600;
-          padding: 8px 12px; border-radius: 10px; transition: all 0.2s ease; position: relative;
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 8px 13px; border-radius: 10px;
+          color: #c4b5fd; font-size: 13.5px; font-weight: 600;
+          text-decoration: none;
+          transition: background 160ms ease, color 160ms ease, transform 160ms cubic-bezier(0.34,1.42,0.64,1);
+        }
+        .ostadi-nav-link:hover {
+          background: rgba(139, 92, 246, 0.14);
+          color: #fff;
+          transform: translateY(-1px);
         }
         .ostadi-nav-link:hover { color: white; background: rgba(124,58,237,0.12); }
         .ostadi-nav-link-icon { display: flex; align-items: center; gap: 6px; }

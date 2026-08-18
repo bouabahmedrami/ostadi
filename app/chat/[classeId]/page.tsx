@@ -11,6 +11,7 @@ import {
 import { Message, Classe } from "@/lib/types";
 import { Send, ArrowLeft, BookOpen, Video, MessageSquare } from "lucide-react";
 import ReportButton from "@/components/ReportButton";
+import { ChatSkeleton } from "@/components/Skeletons";
 import Link from "next/link";
 
 /* ── Bulle de message ───────────────────────────────────── */
@@ -242,10 +243,7 @@ export default function ChatPage() {
       {/* ═══ MESSAGES ═══ */}
       <div className="ch-messages">
         {loading ? (
-          <div className="ch-center">
-            <div className="ch-spinner" />
-            <p>{isRTL ? "جارٍ تحميل الرسائل..." : "Chargement des messages..."}</p>
-          </div>
+          <ChatSkeleton />
         ) : messages.length === 0 ? (
           <div className="ch-center">
             <div className="ch-empty-icon"><MessageSquare size={28} /></div>
@@ -336,10 +334,12 @@ export default function ChatPage() {
         /* ── Header ── */
         .ch-header {
           display: flex; align-items: center; gap: 12px; flex-shrink: 0;
-          background: linear-gradient(180deg, rgba(24,12,52,0.98), rgba(18,8,40,0.98));
-          border-bottom: 1px solid rgba(124,58,237,0.22);
+          background: rgba(20, 8, 43, 0.72);
+          border-bottom: 1px solid rgba(168,85,247,0.2);
           padding: 12px 16px;
-          backdrop-filter: blur(12px);
+          backdrop-filter: blur(20px) saturate(1.6);
+          -webkit-backdrop-filter: blur(20px) saturate(1.6);
+          box-shadow: 0 1px 0 rgba(255,255,255,0.045) inset;
         }
         .ch-back {
           display: flex; align-items: center; justify-content: center;
@@ -464,10 +464,11 @@ export default function ChatPage() {
         /* ── Barre de saisie ── */
         .ch-input-bar {
           flex-shrink: 0;
-          background: linear-gradient(0deg, rgba(24,12,52,0.98), rgba(18,8,40,0.98));
-          border-top: 1px solid rgba(124,58,237,0.22);
+          background: rgba(20, 8, 43, 0.72);
+          border-top: 1px solid rgba(168,85,247,0.2);
           padding: 12px 16px 14px;
-          backdrop-filter: blur(12px);
+          backdrop-filter: blur(20px) saturate(1.6);
+          -webkit-backdrop-filter: blur(20px) saturate(1.6);
         }
         .ch-input-row { display: flex; align-items: flex-end; gap: 11px; }
         .ch-textarea {

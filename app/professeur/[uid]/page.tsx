@@ -16,6 +16,8 @@ import { AvailabilityDisplay } from "@/components/Availability";
 import ReportButton from "@/components/ReportButton";
 import TeacherVideo from "@/components/TeacherVideo";
 import ResponseBadge from "@/components/ResponseBadge";
+import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
+import { ProfileSkeleton, EmptyState } from "@/components/Skeletons";
 import {
   MapPin, BookOpen, Users, Star,
   ArrowLeft, Clock, ShieldCheck, GraduationCap, Briefcase,
@@ -30,9 +32,7 @@ export default function TeacherProfilePage() {
   const [ratings, setRatings] = useState<Rating[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"courses" | "reviews">("courses");
-  const [mounted, setMounted] = useState(false);
 
-  useEffect(() => { setMounted(true); }, []);
   useEffect(() => { if (uid) loadProfile(); }, [uid]);
 
   async function loadProfile() {
@@ -58,15 +58,10 @@ export default function TeacherProfilePage() {
   }
 
   if (loading) return (
-    <div className="tp-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ position: 'relative', width: '48px', height: '48px' }}>
-        <div style={{ position: 'absolute', inset: 0, border: '3px solid rgba(124,58,237,0.15)', borderRadius: '50%' }} />
-        <div style={{ position: 'absolute', inset: 0, border: '3px solid transparent', borderTopColor: '#FF8C00', borderRadius: '50%', animation: 'tpspin 0.8s linear infinite' }} />
+    <div style={{ minHeight: '100vh', padding: '30px 16px' }}>
+      <div style={{ maxWidth: '940px', margin: '0 auto' }}>
+        <ProfileSkeleton />
       </div>
-      <style jsx global>{`
-        @keyframes tpspin { to { transform: rotate(360deg); } }
-        .tp-page { background: #0A0014; min-height: 100vh; }
-      `}</style>
     </div>
   );
 
@@ -95,10 +90,7 @@ export default function TeacherProfilePage() {
 
       {/* ═══ HERO ═══ */}
       <div className="tp-hero">
-        <div className="tp-orb tp-orb-1" />
-        <div className="tp-orb tp-orb-2" />
-
-        <div className={`tp-hero-inner ${mounted ? 'tp-in' : 'tp-out'}`}>
+        <Sequence className="tp-hero-inner">
           <Link href="/" className="tp-back">
             <ArrowLeft size={15} style={{ transform: isRTL ? 'rotate(180deg)' : 'none' }} />
             {isRTL ? "رجوع" : "Retour"}
@@ -173,13 +165,13 @@ export default function TeacherProfilePage() {
               ].map((s, i) => (
                 <div key={i} className="tp-stat">
                   <span className="tp-stat-icon" style={{ color: s.color }}>{s.icon}</span>
-                  <span className="tp-stat-val">{s.value}</span>
+                  <span className="tp-stat-val">{typeof s.value === "number" ? <CountUp to={s.value} /> : s.value}</span>
                   <span className="tp-stat-lbl">{s.label}</span>
                 </div>
               ))}
             </div>
           </div>
-        </div>
+        </Sequence>
       </div>
 
       {/* ═══ TABS ═══ */}
@@ -223,9 +215,9 @@ export default function TeacherProfilePage() {
               <p>{isRTL ? "لا توجد دروس متاحة حالياً" : "Aucun cours disponible pour le moment"}</p>
             </div>
           ) : (
-            <div className="tp-courses-grid">
+            <RevealGroup className="tp-courses-grid">
               {classes.map(c => <ClasseCard key={c.id} classe={c} />)}
-            </div>
+            </RevealGroup>
           )}
           </>
         )}
@@ -265,7 +257,7 @@ export default function TeacherProfilePage() {
 
                 {/* Liste des avis */}
                 {ratings.map(r => (
-                  <div key={r.id} className="tp-review">
+                  <div key={r.id} className="tp-review os-glass">
                     <div className="tp-review-head">
                       <div className="tp-review-author">
                         <span className="tp-review-avatar">👤</span>
@@ -316,13 +308,8 @@ export default function TeacherProfilePage() {
           border-bottom: 1px solid rgba(124,58,237,0.18);
           padding: 26px 16px 30px;
         }
-        .tp-orb { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; }
-        .tp-orb-1 { top: -60px; left: 22%; width: 260px; height: 260px; background: rgba(124,58,237,0.2); }
-        .tp-orb-2 { top: -30px; right: 20%; width: 200px; height: 200px; background: rgba(255,140,0,0.1); }
 
         .tp-hero-inner { position: relative; max-width: 940px; margin: 0 auto; }
-        .tp-in { opacity: 1; transform: translateY(0); transition: opacity 0.5s ease, transform 0.5s ease; }
-        .tp-out { opacity: 0; transform: translateY(12px); }
 
         .tp-back {
           display: inline-flex; align-items: center; gap: 7px;

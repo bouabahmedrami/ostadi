@@ -13,13 +13,14 @@ import {
   TrendingUp, MapPin, Calendar, Banknote, ArrowUpDown, RotateCcw,
 } from "lucide-react";
 import { trSubject, trLevel, trWilaya } from "@/lib/i18n/translate";
+import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
+import { ClasseGridSkeleton, EmptyState } from "@/components/Skeletons";
 type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
 
 export default function HomePage() {
   const { t, isRTL } = useLang();
   const [allClasses, setAllClasses] = useState<Classe[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mounted, setMounted] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
@@ -36,7 +37,7 @@ export default function HomePage() {
   const [dateTo, setDateTo] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("rating");
 
-  useEffect(() => { setMounted(true); loadClasses(); }, []);
+  useEffect(() => { loadClasses(); }, []);
 
   async function loadClasses() {
     setLoading(true);
@@ -132,12 +133,12 @@ export default function HomePage() {
   return (
     <div className="ostadi-page" dir={isRTL ? "rtl" : "ltr"}>
 
-      {/* ═══ HERO ═══ */}
+      {/* ═══ HERO ═══
+          Les orbes locales ont disparu : l'Atmosphere du layout
+          éclaire déjà toute la page. En superposer d'autres ici
+          empilait deux couches de flou pour rien. */}
       <section className="ostadi-hero">
-        <div className="ostadi-orb ostadi-orb-1" />
-        <div className="ostadi-orb ostadi-orb-2" />
-
-        <div className={`ostadi-hero-inner ${mounted ? 'ostadi-fade-in' : 'ostadi-fade-out'}`}>
+        <Sequence className="ostadi-hero-inner">
           <div className="ostadi-hero-badge">
             <Zap size={13} style={{ color: '#FF8C00' }} />
             {t.home.badge}
@@ -145,7 +146,7 @@ export default function HomePage() {
 
           <h1 className="ostadi-hero-title">
             <span className="ostadi-text-white">{t.home.title1} </span>
-            <span className="ostadi-text-gradient">أستاذي</span>
+            <span className="os-gradient">أستاذي</span>
             <br />
             <span className="ostadi-text-white">{t.home.title2}</span>
           </h1>
@@ -282,17 +283,17 @@ export default function HomePage() {
               </div>
             ))}
           </div>
-        </div>
+        </Sequence>
       </section>
 
       {/* ═══ TOP TEACHERS ═══ */}
-      <section className="ostadi-section">
+      <Reveal as="section" className="ostadi-section">
         <div className="ostadi-section-header">
           <div className="ostadi-section-icon-badge"><TrendingUp size={16} style={{ color: '#FF8C00' }} /></div>
           <h2 className="ostadi-section-title">{isRTL ? "أفضل الأساتذة" : "Meilleurs Professeurs"}</h2>
         </div>
         <TopTeachers />
-      </section>
+      </Reveal>
 
       {/* ═══ RÉSULTATS ═══ */}
       <section className="ostadi-section">
@@ -335,48 +336,45 @@ export default function HomePage() {
         )}
 
         {loading ? (
-          <div className="ostadi-classes-grid">
-            {[...Array(6)].map((_, i) => (
-              <div key={i} className="ostadi-skeleton-card">
-                <div className="ostadi-skeleton-line" style={{ width: '70%', height: '14px' }} />
-                <div className="ostadi-skeleton-line" style={{ width: '45%', height: '10px', marginTop: '10px' }} />
-                <div className="ostadi-skeleton-line" style={{ width: '100%', height: '10px', marginTop: '14px' }} />
-              </div>
-            ))}
-          </div>
+          /* Le squelette reprend la forme exacte d'une carte de cours :
+             l'œil se prépare, et rien ne saute quand le vrai contenu
+             arrive. */
+          <ClasseGridSkeleton count={6} />
         ) : loadError ? (
-          <div className="ostadi-empty-state">
-            <div className="ostadi-empty-icon"><RotateCcw size={30} /></div>
-            <p className="ostadi-empty-title">
-              {isRTL ? "تعذّر تحميل الدروس" : "Impossible de charger les cours"}
-            </p>
-            <p className="ostadi-empty-hint">
-              {isRTL ? "تحقق من اتصالك بالإنترنت" : "Vérifiez votre connexion internet"}
-            </p>
-            <button onClick={loadClasses} className="ostadi-reset-all" style={{ margin: '20px auto 0' }}>
-              <RotateCcw size={13} /> {isRTL ? "إعادة المحاولة" : "Réessayer"}
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="ostadi-empty-state">
-            <div className="ostadi-empty-icon"><Search size={30} /></div>
-            <p className="ostadi-empty-title">{isRTL ? "لا توجد نتائج" : "Aucun cours ne correspond"}</p>
-            <p className="ostadi-empty-hint">{isRTL ? "جرّب تعديل الفلاتر أو البحث" : "Essayez d'élargir vos critères de recherche"}</p>
-            {(search || activeCount > 0) && (
-              <button onClick={resetAll} className="ostadi-reset-all" style={{ margin: '20px auto 0' }}>
-                <RotateCcw size={13} /> {isRTL ? "إعادة تعيين" : "Réinitialiser"}
+          <EmptyState
+            icon={<RotateCcw size={28} />}
+            title={isRTL ? "تعذّر تحميل الدروس" : "Impossible de charger les cours"}
+            hint={isRTL ? "تحقق من اتصالك بالإنترنت" : "Vérifiez votre connexion internet"}
+            action={
+              <button onClick={loadClasses} className="os-btn-chalk" style={{ padding: '11px 22px', display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '13.5px' }}>
+                <RotateCcw size={14} /> {isRTL ? "إعادة المحاولة" : "Réessayer"}
               </button>
-            )}
-          </div>
+            }
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={<Search size={28} />}
+            title={isRTL ? "لا توجد نتائج" : "Aucun cours ne correspond"}
+            hint={isRTL ? "جرّب تعديل الفلاتر أو البحث" : "Essayez d'élargir vos critères de recherche"}
+            action={
+              (search || activeCount > 0) ? (
+                <button onClick={resetAll} className="os-btn-ghost" style={{ padding: '11px 22px', display: 'inline-flex', alignItems: 'center', gap: '7px', fontSize: '13.5px' }}>
+                  <RotateCcw size={14} /> {isRTL ? "إعادة تعيين" : "Réinitialiser"}
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
-          <div className="ostadi-classes-grid">
+          /* Cascade plafonnée à 8 : au-delà, l'utilisateur attend
+             la fin de l'animation au lieu de lire. */
+          <RevealGroup className="ostadi-classes-grid">
             {filtered.map(c => <ClasseCard key={c.id} classe={c} />)}
-          </div>
+          </RevealGroup>
         )}
       </section>
 
       {/* ═══ CTA ═══ */}
-      <section className="ostadi-cta-section">
+      <Reveal as="section" direction="scale" className="ostadi-cta-section">
         <div className="ostadi-cta-glow" />
         <div className="ostadi-cta-inner">
           <h2 className="ostadi-cta-title">{t.home.ctaTitle}</h2>
@@ -385,7 +383,7 @@ export default function HomePage() {
           </p>
           <Link href="/auth?mode=register&role=teacher" className="ostadi-cta-btn">{t.home.ctaBtn}</Link>
         </div>
-      </section>
+      </Reveal>
 
       <style jsx global>{`
         .ostadi-page {
@@ -399,12 +397,7 @@ export default function HomePage() {
           overflow-x: hidden;
         }
         .ostadi-hero { position: relative; overflow: hidden; padding: 60px 16px 40px; }
-        .ostadi-orb { position: absolute; border-radius: 50%; filter: blur(60px); pointer-events: none; }
-        .ostadi-orb-1 { top: -80px; left: 10%; width: 320px; height: 320px; background: rgba(124,58,237,0.18); }
-        .ostadi-orb-2 { top: 40px; right: 8%; width: 240px; height: 240px; background: rgba(255,140,0,0.1); }
         .ostadi-hero-inner { position: relative; max-width: 820px; margin: 0 auto; text-align: center; }
-        .ostadi-fade-in { opacity: 1; transform: translateY(0); transition: opacity 0.6s ease, transform 0.6s ease; }
-        .ostadi-fade-out { opacity: 0; transform: translateY(16px); }
         .ostadi-hero-badge {
           display: inline-flex; align-items: center; gap: 8px;
           background: rgba(124,58,237,0.15); border: 1px solid rgba(168,85,247,0.3);

@@ -7,6 +7,7 @@ import Navbar from "@/components/Navbar";
 import HtmlLangSync from "@/components/HtmlLangSync";
 import ReminderChecker from "@/components/ReminderChecker";
 import InstallPrompt from "@/components/InstallPrompt";
+import { Atmosphere } from "@/components/Motion";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://ostadi.vercel.app";
 
@@ -108,6 +109,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           traducteurs, gestionnaires de mots de passe) ajoutent des attributs
           au <body> après le rendu serveur, ce que React signale sinon */}
       <body suppressHydrationWarning>
+        {/* ═══ ATMOSPHÈRE ═══
+            Les halos lumineux du fond. Placés AVANT tout le reste,
+            en position fixe et z-index 0.
+
+            Sans eux, le verre dépoli ne ressemble à rien : un panneau
+            translucide devant du noir uni n'est qu'une boîte grise.
+            C'est la lumière derrière qui fait le verre. */}
+        <Atmosphere />
+
         <LangProvider>
           <HtmlLangSync />
           <BandwidthProvider>
@@ -119,7 +129,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {/* Invitation à installer — n'apparaît qu'après 45 s de navigation */}
               <InstallPrompt />
               <Navbar />
-              <main className="ostadi-main">{children}</main>
+              <main className="ostadi-main" style={{ position: "relative", zIndex: 1 }}>
+                {children}
+              </main>
             </AuthProvider>
           </BandwidthProvider>
         </LangProvider>

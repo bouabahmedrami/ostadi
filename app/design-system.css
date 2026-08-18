@@ -1,0 +1,671 @@
+/* ═══════════════════════════════════════════════════════════
+   OSTADI — SYSTÈME DE DESIGN
+   ═══════════════════════════════════════════════════════════
+
+   Direction : verre dépoli sur nuit d'étude.
+
+   Le verre n'existe que s'il y a de la lumière derrière. Sur fond
+   sombre, un panneau translucide sans source lumineuse ne ressemble
+   à rien — juste à une boîte grise. D'où les halos d'ambiance : ce
+   sont eux qui donnent au verre sa raison d'être.
+
+   L'orange n'est pas un accent décoratif : c'est la craie sur le
+   tableau. Il éclaire, il souligne, il ne remplit jamais de grandes
+   surfaces.
+
+   ⚠️ Performance — marché algérien
+   Le flou d'arrière-plan est coûteux. Sur un téléphone d'entrée de
+   gamme, empiler cinq panneaux floutés fait chuter le défilement à
+   15 images par seconde. Trois règles :
+     • jamais plus de 2 niveaux de verre superposés
+     • le flou est désactivé sous 400 px de large
+     • `prefers-reduced-transparency` le retire entièrement
+   ═══════════════════════════════════════════════════════════ */
+
+
+/* ═══════════════════════════════════════════════════════════
+   1. JETONS
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Fond ── */
+  --void: #08000F;          /* le plus profond, réservé au fond de page */
+  --night: #0A0014;         /* fond standard */
+  --deep: #14082B;          /* sections surélevées */
+
+  /* ── Violet ── */
+  --violet-900: #2A1050;
+  --violet-700: #4C1D95;
+  --violet-500: #7C3AED;
+  --violet-300: #A78BFA;
+  --violet-100: #E9D5FF;
+
+  /* ── Craie (orange) ── */
+  --chalk-600: #FF6B00;
+  --chalk-500: #FF8C00;
+  --chalk-300: #FFB347;
+  --chalk-100: #FFD9A0;
+
+  /* ── Texte ── */
+  --ink-100: #FFFFFF;
+  --ink-200: #E9D5FF;
+  --ink-300: #C4B5FD;
+  --ink-400: #A78BFA;
+  --ink-500: #8B7BB8;
+  --ink-600: #6D28D9;
+  --ink-700: #4C1D95;
+
+  /* ── Sémantique ── */
+  --ok: #22C55E;
+  --warn: #FBBF24;
+  --danger: #EF4444;
+  --info: #3B82F6;
+
+  /* ── Verre : trois niveaux, pas plus ── */
+  --glass-1-bg: rgba(139, 92, 246, 0.08);
+  --glass-1-border: rgba(168, 85, 247, 0.18);
+  --glass-1-blur: 12px;
+
+  --glass-2-bg: rgba(34, 17, 68, 0.42);
+  --glass-2-border: rgba(168, 85, 247, 0.26);
+  --glass-2-blur: 20px;
+
+  --glass-3-bg: rgba(42, 22, 82, 0.6);
+  --glass-3-border: rgba(168, 85, 247, 0.32);
+  --glass-3-blur: 28px;
+
+  /* Reflet supérieur — ce qui fait vraiment « verre » */
+  --glass-sheen: linear-gradient(
+    170deg,
+    rgba(255, 255, 255, 0.11) 0%,
+    rgba(255, 255, 255, 0.035) 20%,
+    transparent 48%
+  );
+
+  /* ── Ombres ── */
+  --lift-1: 0 2px 8px rgba(0, 0, 0, 0.24);
+  --lift-2: 0 8px 24px rgba(0, 0, 0, 0.34);
+  --lift-3: 0 18px 44px rgba(0, 0, 0, 0.46);
+  --glow-chalk: 0 0 28px rgba(255, 140, 0, 0.28);
+  --glow-violet: 0 0 32px rgba(124, 58, 237, 0.3);
+
+  /* ── Rayons ── */
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --r-full: 999px;
+
+  /* ── Mouvement ──
+     Deux courbes seulement. Le ressort pour ce que l'utilisateur
+     déclenche, la glisse pour ce qui arrive tout seul. */
+  --spring: cubic-bezier(0.34, 1.42, 0.64, 1);
+  --glide: cubic-bezier(0.22, 1, 0.36, 1);
+  --swift: 160ms;
+  --normal: 280ms;
+  --slow: 460ms;
+
+  /* ── Espacement ── */
+  --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+  --s5: 22px; --s6: 30px; --s7: 42px; --s8: 60px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   2. ATMOSPHÈRE
+   Les halos derrière le verre. Sans eux, rien ne fonctionne.
+   ═══════════════════════════════════════════════════════════ */
+
+.os-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  /* Base sombre légèrement teintée — évite le noir plat sous les halos */
+  background:
+    radial-gradient(ellipse 120% 70% at 50% -10%, rgba(76, 29, 149, 0.34), transparent 62%),
+    radial-gradient(ellipse 90% 60% at 85% 40%, rgba(120, 53, 15, 0.13), transparent 60%);
+}
+
+.os-halo {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform;
+}
+
+.os-halo-a {
+  top: -14vh;
+  inset-inline-start: 8vw;
+  width: 46vw; height: 46vw;
+  min-width: 320px; min-height: 320px;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.85), rgba(124, 58, 237, 0.3) 45%, transparent 70%);
+  animation: haloDrift 26s var(--glide) infinite alternate;
+}
+
+.os-halo-b {
+  top: 22vh;
+  inset-inline-end: -6vw;
+  width: 38vw; height: 38vw;
+  min-width: 280px; min-height: 280px;
+  background: radial-gradient(circle, rgba(255, 140, 0, 0.5), rgba(255, 107, 0, 0.16) 45%, transparent 70%);
+  animation: haloDrift 32s var(--glide) infinite alternate-reverse;
+}
+
+.os-halo-c {
+  bottom: -18vh;
+  inset-inline-start: 26vw;
+  width: 42vw; height: 42vw;
+  min-width: 300px; min-height: 300px;
+  background: radial-gradient(circle, rgba(109, 40, 217, 0.7), rgba(76, 29, 149, 0.24) 45%, transparent 70%);
+  animation: haloDrift 38s var(--glide) infinite alternate;
+}
+
+@keyframes haloDrift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(4vw, 5vh, 0) scale(1.14); }
+}
+
+/* Trame — donne au verre quelque chose à réfracter */
+.os-weave {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(168, 85, 247, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(168, 85, 247, 0.055) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, #000 35%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 65% at 50% 0%, #000 35%, transparent 78%);
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   3. SURFACES DE VERRE
+   ═══════════════════════════════════════════════════════════ */
+
+.os-glass,
+.os-glass-2,
+.os-glass-3 {
+  position: relative;
+  border-radius: var(--r-lg);
+  isolation: isolate;
+}
+
+/* Le reflet — pseudo-élément pour ne pas polluer le contenu */
+.os-glass::before,
+.os-glass-2::before,
+.os-glass-3::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-sheen);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.os-glass {
+  background: var(--glass-1-bg);
+  border: 1px solid var(--glass-1-border);
+  backdrop-filter: blur(var(--glass-1-blur)) saturate(1.4);
+  -webkit-backdrop-filter: blur(var(--glass-1-blur)) saturate(1.4);
+}
+
+.os-glass-2 {
+  background: var(--glass-2-bg);
+  border: 1px solid var(--glass-2-border);
+  backdrop-filter: blur(var(--glass-2-blur)) saturate(1.6);
+  -webkit-backdrop-filter: blur(var(--glass-2-blur)) saturate(1.6);
+  box-shadow: var(--lift-2), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+.os-glass-3 {
+  background: var(--glass-3-bg);
+  border: 1px solid var(--glass-3-border);
+  backdrop-filter: blur(var(--glass-3-blur)) saturate(1.7);
+  -webkit-backdrop-filter: blur(var(--glass-3-blur)) saturate(1.7);
+  box-shadow: var(--lift-3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Carte interactive */
+.os-card {
+  transition:
+    transform var(--normal) var(--spring),
+    border-color var(--normal) ease,
+    box-shadow var(--normal) ease;
+  will-change: transform;
+}
+.os-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(168, 85, 247, 0.42);
+  box-shadow: var(--lift-3);
+}
+.os-card:active { transform: translateY(-1px) scale(0.994); }
+
+/* Bordure lumineuse au survol — la craie qui souligne */
+.os-card-lit { position: relative; }
+.os-card-lit::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 140, 0, 0.55),
+    rgba(124, 58, 237, 0.4) 42%,
+    transparent 68%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity var(--normal) ease;
+  pointer-events: none;
+}
+.os-card-lit:hover::after { opacity: 1; }
+
+
+/* ═══════════════════════════════════════════════════════════
+   4. APPARITION AU DÉFILEMENT
+   Piloté par ScrollReveal.tsx, qui bascule .os-seen
+   ═══════════════════════════════════════════════════════════ */
+
+.os-reveal {
+  opacity: 0;
+  transform: translateY(22px);
+  transition:
+    opacity var(--slow) var(--glide),
+    transform var(--slow) var(--glide);
+}
+.os-reveal.os-seen { opacity: 1; transform: none; }
+
+.os-reveal-left  { opacity: 0; transform: translateX(-26px); }
+.os-reveal-right { opacity: 0; transform: translateX(26px); }
+.os-reveal-scale { opacity: 0; transform: scale(0.955); }
+.os-reveal-left.os-seen,
+.os-reveal-right.os-seen,
+.os-reveal-scale.os-seen { opacity: 1; transform: none; }
+
+.os-reveal-left,
+.os-reveal-right,
+.os-reveal-scale {
+  transition:
+    opacity var(--slow) var(--glide),
+    transform var(--slow) var(--glide);
+}
+
+/* Cascade — sur des listes, jamais au-delà de 8 éléments */
+.os-stagger > * { transition-delay: calc(var(--i, 0) * 65ms); }
+
+
+/* ═══════════════════════════════════════════════════════════
+   5. MICRO-INTERACTIONS
+   ═══════════════════════════════════════════════════════════ */
+
+.os-press {
+  transition: transform var(--swift) var(--spring), filter var(--swift) ease;
+}
+.os-press:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.07); }
+.os-press:active:not(:disabled) { transform: translateY(0) scale(0.97); }
+
+/* Bouton principal — la craie */
+.os-btn-chalk {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--chalk-500), var(--chalk-600));
+  color: #fff;
+  border: none;
+  font-weight: 750;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(255, 140, 0, 0.28);
+  transition:
+    transform var(--swift) var(--spring),
+    box-shadow var(--normal) ease;
+}
+.os-btn-chalk:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(255, 140, 0, 0.42), var(--glow-chalk);
+}
+.os-btn-chalk:active:not(:disabled) { transform: translateY(0) scale(0.975); }
+.os-btn-chalk:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+
+/* Balayage lumineux au survol */
+.os-btn-chalk::after {
+  content: "";
+  position: absolute;
+  top: 0; inset-inline-start: -80%;
+  width: 55%; height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.26),
+    transparent
+  );
+  transform: skewX(-18deg);
+  transition: inset-inline-start var(--slow) var(--glide);
+  pointer-events: none;
+}
+.os-btn-chalk:hover::after { inset-inline-start: 130%; }
+
+/* Bouton discret */
+.os-btn-ghost {
+  background: var(--glass-1-bg);
+  border: 1px solid var(--glass-1-border);
+  color: var(--ink-300);
+  font-weight: 650;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: all var(--swift) ease;
+}
+.os-btn-ghost:hover:not(:disabled) {
+  background: rgba(124, 58, 237, 0.14);
+  border-color: rgba(168, 85, 247, 0.34);
+  color: var(--ink-100);
+}
+
+/* Champ */
+.os-input {
+  width: 100%;
+  background: rgba(20, 8, 43, 0.6);
+  border: 1px solid rgba(124, 58, 237, 0.24);
+  border-radius: var(--r-md);
+  padding: 12px 15px;
+  color: var(--ink-100);
+  font-family: inherit;
+  font-size: 13.5px;
+  outline: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition:
+    border-color var(--swift) ease,
+    background var(--swift) ease,
+    box-shadow var(--swift) ease;
+}
+.os-input:focus {
+  border-color: rgba(255, 140, 0, 0.5);
+  background: rgba(20, 8, 43, 0.86);
+  box-shadow: 0 0 0 3px rgba(255, 140, 0, 0.1);
+}
+.os-input::placeholder { color: var(--ink-700); }
+
+/* Étiquette */
+.os-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--glass-1-bg);
+  border: 1px solid var(--glass-1-border);
+  color: var(--ink-300);
+  font-size: 11.5px;
+  font-weight: 650;
+  padding: 5px 12px;
+  border-radius: var(--r-full);
+  transition: all var(--swift) var(--spring);
+}
+.os-chip-on {
+  background: rgba(255, 140, 0, 0.14);
+  border-color: rgba(255, 140, 0, 0.4);
+  color: var(--chalk-500);
+}
+a.os-chip:hover, button.os-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(168, 85, 247, 0.38);
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   6. CHARGEMENT
+   ═══════════════════════════════════════════════════════════ */
+
+.os-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(124, 58, 237, 0.075);
+  border-radius: var(--r-sm);
+}
+.os-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(168, 85, 247, 0.16),
+    rgba(255, 140, 0, 0.06),
+    transparent
+  );
+  animation: sweep 1.5s infinite;
+}
+@keyframes sweep { to { transform: translateX(100%); } }
+
+.os-skeleton-line { height: 11px; margin-bottom: 9px; }
+.os-skeleton-line:last-child { margin-bottom: 0; width: 62%; }
+.os-skeleton-title { height: 17px; width: 55%; margin-bottom: 14px; }
+.os-skeleton-circle { border-radius: 50%; }
+
+/* Rotateur */
+.os-spinner {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(124, 58, 237, 0.16);
+  border-top-color: var(--chalk-500);
+  animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Point de vie — direct, en attente */
+.os-pulse {
+  position: relative;
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+.os-pulse::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid var(--danger);
+  animation: ping 1.7s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes ping {
+  0%        { transform: scale(0.85); opacity: 0.9; }
+  75%, 100% { transform: scale(2);    opacity: 0; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   7. TRANSITIONS DE PAGE
+   ═══════════════════════════════════════════════════════════ */
+
+.os-page-enter {
+  animation: pageIn var(--slow) var(--glide) both;
+}
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Séquence d'ouverture — le titre, puis le reste */
+.os-seq > * {
+  animation: seqIn var(--slow) var(--glide) both;
+}
+.os-seq > *:nth-child(1) { animation-delay: 40ms; }
+.os-seq > *:nth-child(2) { animation-delay: 110ms; }
+.os-seq > *:nth-child(3) { animation-delay: 180ms; }
+.os-seq > *:nth-child(4) { animation-delay: 250ms; }
+.os-seq > *:nth-child(5) { animation-delay: 320ms; }
+.os-seq > *:nth-child(n+6) { animation-delay: 380ms; }
+
+@keyframes seqIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   8. TYPOGRAPHIE
+   ═══════════════════════════════════════════════════════════ */
+
+.os-display {
+  font-weight: 900;
+  letter-spacing: -0.032em;
+  line-height: 1.06;
+  color: var(--ink-100);
+}
+.os-h1 { font-size: clamp(28px, 5.2vw, 44px); }
+.os-h2 { font-size: clamp(21px, 3.4vw, 30px); }
+.os-h3 { font-size: clamp(17px, 2.4vw, 21px); }
+
+.os-eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--chalk-500);
+}
+
+/* Dégradé de craie — sur un mot, jamais sur une phrase entière */
+.os-gradient {
+  background: linear-gradient(120deg, var(--chalk-500), var(--chalk-300));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.os-muted { color: var(--ink-500); }
+.os-dim   { color: var(--ink-600); }
+
+
+/* ═══════════════════════════════════════════════════════════
+   9. DISPOSITION
+   ═══════════════════════════════════════════════════════════ */
+
+.os-shell {
+  position: relative;
+  z-index: 1;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--s6) var(--s4) var(--s8);
+}
+
+.os-grid {
+  display: grid;
+  gap: var(--s4);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+
+.os-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex-wrap: wrap;
+}
+
+.os-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s4);
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   10. ACCESSIBILITÉ ET PERFORMANCE
+   ═══════════════════════════════════════════════════════════ */
+
+/* Contour visible au clavier uniquement */
+:focus-visible {
+  outline: 2px solid var(--chalk-500);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* Mouvement réduit — réglage système respecté sans discussion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .os-reveal,
+  .os-reveal-left,
+  .os-reveal-right,
+  .os-reveal-scale {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .os-halo { animation: none; }
+}
+
+/* Transparence réduite — certains y voient mal */
+@media (prefers-reduced-transparency: reduce) {
+  .os-glass,
+  .os-glass-2,
+  .os-glass-3 {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: #16092E;
+  }
+  .os-halo { display: none; }
+}
+
+/**
+ * Petits écrans — où se trouve la majorité de nos utilisateurs.
+ *
+ * Le flou d'arrière-plan est l'effet le plus coûteux du navigateur.
+ * Sur un téléphone d'entrée de gamme, trois panneaux floutés suffisent
+ * à faire tomber le défilement à 15 images par seconde. On le retire
+ * et on compense par une opacité plus franche : visuellement proche,
+ * sans le coût.
+ */
+@media (max-width: 480px) {
+  .os-glass {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(26, 12, 52, 0.82);
+  }
+  .os-glass-2 {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background: rgba(30, 15, 60, 0.88);
+  }
+  .os-glass-3 {
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    background: rgba(38, 20, 74, 0.92);
+  }
+  .os-halo { filter: blur(60px); opacity: 0.4; }
+}
+
+/* Navigateur sans backdrop-filter — repli opaque */
+@supports not (backdrop-filter: blur(1px)) {
+  .os-glass   { background: rgba(26, 12, 52, 0.9); }
+  .os-glass-2 { background: rgba(30, 15, 60, 0.94); }
+  .os-glass-3 { background: rgba(38, 20, 74, 0.96); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   11. ADAPTATIONS RTL
+   ═══════════════════════════════════════════════════════════ */
+
+[dir="rtl"] .os-flip { transform: scaleX(-1); }
+
+/* Le balayage part de l'autre côté en arabe */
+[dir="rtl"] .os-btn-chalk::after { transform: skewX(18deg); }
+
+[dir="rtl"] .os-reveal-left  { transform: translateX(26px); }
+[dir="rtl"] .os-reveal-right { transform: translateX(-26px); }

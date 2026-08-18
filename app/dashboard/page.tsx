@@ -18,17 +18,26 @@ import SessionsPicker from "@/components/SessionsPicker";
 import DuplicateClasseModal from "@/components/DuplicateClasseModal";
 import ClasseStats from "@/components/ClasseStats";
 import StudentPayments from "@/components/StudentPayments";
+import { Reveal, RevealGroup, Sequence, CountUp } from "@/components/Motion";
+import { StatsSkeleton, PageLoader, EmptyState } from "@/components/Skeletons";
 import ResponseBadge from "@/components/ResponseBadge";
 import ProgressTracker from "@/components/ProgressTracker";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
+  // Un chiffre qui monte attire l'œil là où un chiffre posé ne dit
+  // rien. On n'anime que les valeurs numériques pures — « 87 % »
+  // resterait figé sinon.
+  const numeric = typeof value === "number";
+
   return (
-    <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+    <div className="os-glass-2 os-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
       <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: '28px', fontWeight: 900, color: 'white', lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: '28px', fontWeight: 900, color: 'white', lineHeight: 1, letterSpacing: '-0.6px' }}>
+          {numeric ? <CountUp to={value as number} /> : value}
+        </div>
         <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '4px' }}>{label}</div>
       </div>
     </div>
@@ -192,10 +201,10 @@ export default function DashboardPage() {
   }
 
   if (loading || loadingData) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#a78bfa', background: '#0D0118' }}>
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ width: '40px', height: '40px', border: '3px solid #FF8C00', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-        <p>Chargement...</p>
+    <div style={{ minHeight: '100vh', padding: '32px 16px' }}>
+      <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
+        <div className="os-skeleton" style={{ height: 30, width: 240, marginBottom: 28 }} />
+        <StatsSkeleton count={4} />
       </div>
     </div>
   );
@@ -205,10 +214,11 @@ export default function DashboardPage() {
   const smallBtn = { display: 'flex', alignItems: 'center', gap: '6px', border: '1px solid rgba(168,85,247,0.4)', color: '#c4b5fd', background: 'transparent', padding: '8px 14px', borderRadius: '10px', cursor: 'pointer', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit' };
 
   return (
-    <div style={{ background: '#0D0118', minHeight: '100vh', backgroundImage: 'linear-gradient(rgba(168,85,247,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(168,85,247,0.04) 1px, transparent 1px)', backgroundSize: '40px 40px' }}>
+    <div style={{ minHeight: '100vh' }}>
       <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 16px' }}>
 
         {/* Header */}
+        <Sequence>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '28px', flexWrap: 'wrap', gap: '12px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
@@ -221,7 +231,8 @@ export default function DashboardPage() {
           </div>
           <button
             onClick={() => setShowCreateModal(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#FF8C00', color: 'white', fontWeight: 700, padding: '12px 20px', borderRadius: '14px', border: 'none', cursor: 'pointer', fontSize: '14px', boxShadow: '0 0 20px rgba(255,140,0,0.3)' }}
+            className="os-btn-chalk"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 20px', fontSize: '14px' }}
           >
             <Plus style={{ width: '18px', height: '18px' }} />
             Nouveau cours
@@ -235,6 +246,7 @@ export default function DashboardPage() {
           <StatCard label="Présences" value={stats.totalAttendance} icon={<CheckCircle style={{ width: '22px', height: '22px', color: '#34d399' }} />} color="rgba(6,78,59,0.4)" />
           <StatCard label="Taux présence" value={`${stats.attendanceRate}%`} icon={<TrendingUp style={{ width: '22px', height: '22px', color: '#FF8C00' }} />} color="rgba(194,65,12,0.3)" />
         </div>
+        </Sequence>
 
         {/* Banners */}
         {!profile?.subscriptionActive && (
@@ -314,17 +326,22 @@ export default function DashboardPage() {
             )}
             {user && <EnrollmentRequestsPanel teacherId={user.uid} />}
             {classes.length === 0 ? (
-              <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '48px', textAlign: 'center' }}>
-                <BookOpen style={{ width: '40px', height: '40px', color: '#4c1d95', margin: '0 auto 12px', opacity: 0.5 }} />
-                <p style={{ color: '#a78bfa', margin: '0 0 16px' }}>Aucun cours encore.</p>
-                <button onClick={() => setShowCreateModal(true)} style={{ background: '#FF8C00', color: 'white', fontWeight: 700, padding: '10px 20px', borderRadius: '12px', border: 'none', cursor: 'pointer' }}>
-                  Créer mon premier cours
-                </button>
-              </div>
+              <EmptyState
+                icon={<BookOpen size={28} />}
+                title={isRTL ? "لم تنشئ أي درس بعد" : "Vous n'avez pas encore créé de cours"}
+                hint={isRTL
+                  ? "أول درس يستغرق دقيقتين. الطلاب لن يجدوك قبل ذلك."
+                  : "Le premier prend deux minutes. Les élèves ne peuvent pas vous trouver avant."}
+                action={
+                  <button onClick={() => setShowCreateModal(true)} className="os-btn-chalk" style={{ padding: '11px 22px', fontSize: '13.5px' }}>
+                    Créer mon premier cours
+                  </button>
+                }
+              />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <RevealGroup className="os-stack">
                 {classes.map((c) => (
-                  <div key={c.id} style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.4)', borderRadius: '16px', padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                  <div key={c.id} className="os-glass-2 os-card" style={{ padding: '20px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                     <div style={{ width: '4px', height: '60px', borderRadius: '4px', background: c.status === 'live' ? '#ef4444' : '#FF8C00', flexShrink: 0 }} />
 
                     <div style={{ flex: 1, minWidth: '200px' }}>
@@ -379,7 +396,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 ))}
-              </div>
+              </RevealGroup>
             )}
           </>
         )}
@@ -433,7 +450,7 @@ export default function DashboardPage() {
       {/* Create modal */}
       {showCreateModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '20px', width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
+          <div className="os-glass-3" style={{ width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <div>
                 <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>Créer un cours</h2>
@@ -569,7 +586,7 @@ export default function DashboardPage() {
       {/* Students modal */}
       {selectedClasse && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div style={{ background: '#110225', border: '1px solid rgba(88,28,135,0.5)', borderRadius: '20px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
+          <div className="os-glass-3" style={{ width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <div>
                 <h2 style={{ color: 'white', fontWeight: 800, fontSize: '18px', margin: 0 }}>

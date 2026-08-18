@@ -23,6 +23,8 @@ import ProgressTracker from "@/components/ProgressTracker";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
+import { Reveal, Sequence } from "@/components/Motion";
+import { PageLoader } from "@/components/Skeletons";
 
 export default function ClassePage() {
   const { id } = useParams();
@@ -36,12 +38,9 @@ export default function ClassePage() {
   const [attended, setAttended] = useState(false);
   const [showRating, setShowRating] = useState(false);
   const [alreadyRated, setAlreadyRated] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
   const [requestMessage, setRequestMessage] = useState("");
   const [now, setNow] = useState(Date.now());
-
-  useEffect(() => { setMounted(true); }, []);
 
   // Rafraîchit l'état d'ouverture : la salle s'ouvre et se ferme
   // pendant que l'utilisateur regarde la page
@@ -169,15 +168,7 @@ export default function ClassePage() {
     });
   }
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0A0014' }}>
-      <div style={{ position: 'relative', width: '56px', height: '56px' }}>
-        <div style={{ position: 'absolute', inset: 0, border: '3px solid rgba(124,58,237,0.15)', borderRadius: '50%' }} />
-        <div style={{ position: 'absolute', inset: 0, border: '3px solid transparent', borderTopColor: '#FF8C00', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-      </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
+  if (loading) return <PageLoader label={isRTL ? "جارٍ التحميل..." : "Chargement du cours..."} />;
 
   if (!classe) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#a78bfa', background: '#0A0014' }}>
@@ -186,19 +177,10 @@ export default function ClassePage() {
   );
 
   return (
-    <div style={{
-      backgroundColor: '#0A0014', minHeight: '100vh',
-      backgroundImage: `radial-gradient(circle at 20% 10%, rgba(124,58,237,0.12) 0%, transparent 50%),
-        radial-gradient(circle at 80% 60%, rgba(255,140,0,0.06) 0%, transparent 50%),
-        linear-gradient(rgba(168,85,247,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(168,85,247,0.03) 1px, transparent 1px)`,
-      backgroundSize: 'auto, auto, 44px 44px, 44px 44px',
-    }} dir={isRTL ? "rtl" : "ltr"}>
+    <div style={{ minHeight: '100vh' }} dir={isRTL ? "rtl" : "ltr"}>
 
       <div style={{
         maxWidth: '920px', margin: '0 auto', padding: '28px 16px 60px',
-        opacity: mounted ? 1 : 0, transform: mounted ? 'translateY(0)' : 'translateY(12px)',
-        transition: 'opacity 0.5s ease, transform 0.5s ease',
       }}>
 
         <Link href="/" className="ostadi-back-link" style={{
@@ -210,10 +192,10 @@ export default function ClassePage() {
           {isRTL ? "رجوع" : "Retour"}
         </Link>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+        <Sequence className="os-stack">
 
           {/* ═══ HERO HEADER ═══ */}
-          <div className="ostadi-card ostadi-card-glow" style={{ padding: '26px', position: 'relative', overflow: 'hidden' }}>
+          <div className="os-glass-2 ostadi-card-glow" style={{ padding: '26px', position: 'relative', overflow: 'hidden' }}>
             <div style={{
               position: 'absolute', top: '-60px', right: isRTL ? 'auto' : '-60px', left: isRTL ? '-60px' : 'auto',
               width: '180px', height: '180px', borderRadius: '50%',
@@ -276,7 +258,7 @@ export default function ClassePage() {
 
           {/* ═══ VIDEO ROOM (inscrits + prof) ═══ */}
           {canAccessRoom && access?.open ? (
-            <div className="ostadi-card" style={{ padding: '22px' }}>
+            <div className="os-glass-2" style={{ padding: '22px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
                 <h2 style={{ color: 'white', fontWeight: 700, fontSize: '15.5px', margin: 0, display: 'flex', alignItems: 'center', gap: '9px' }}>
                   <div style={{ width: '30px', height: '30px', borderRadius: '9px', background: 'linear-gradient(135deg, rgba(255,140,0,0.25), rgba(255,140,0,0.1))', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -318,7 +300,7 @@ export default function ClassePage() {
             </div>
           ) : canAccessRoom && access && !access.open ? (
             /* ═══ INSCRIT MAIS SALLE FERMÉE ═══ */
-            <div className="ostadi-card" style={{
+            <div className="os-glass-2" style={{
               padding: '34px 24px', textAlign: 'center',
               background: access.reason === "ended"
                 ? 'rgba(124,58,237,0.04)'
@@ -377,7 +359,7 @@ export default function ClassePage() {
             <>
               {/* ÉTAT 1 : Demande en attente */}
               {myRequest?.status === "pending" && (
-                <div className="ostadi-card" style={{
+                <div className="os-glass-2" style={{
                   background: 'linear-gradient(135deg, rgba(251,191,36,0.06), rgba(124,58,237,0.04))',
                   border: '1px solid rgba(251,191,36,0.3)', textAlign: 'center', padding: '40px 24px',
                 }}>
@@ -407,7 +389,7 @@ export default function ClassePage() {
 
               {/* ÉTAT 2 : Demande refusée */}
               {myRequest?.status === "rejected" && (
-                <div className="ostadi-card" style={{
+                <div className="os-glass-2" style={{
                   background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.3)',
                   textAlign: 'center', padding: '40px 24px',
                 }}>
@@ -443,7 +425,7 @@ export default function ClassePage() {
 
               {/* ÉTAT 3b : Places disponibles → formulaire */}
               {!myRequest && !isClasseFull(classe) && (
-                <div className="ostadi-card" style={{
+                <div className="os-glass-2" style={{
                   background: 'linear-gradient(135deg, rgba(255,140,0,0.06), rgba(124,58,237,0.04))',
                   border: '1px solid rgba(255,140,0,0.25)', padding: '32px 24px',
                 }}>
@@ -480,7 +462,7 @@ export default function ClassePage() {
                       <button
                         onClick={handleSendRequest}
                         disabled={sendingRequest}
-                        className="ostadi-btn-orange"
+                        className="os-btn-chalk"
                         style={{ width: '100%', padding: '14px', justifyContent: 'center', fontSize: '14.5px', opacity: sendingRequest ? 0.6 : 1 }}
                       >
                         <Send style={{ width: '16px', height: '16px' }} />
@@ -488,7 +470,7 @@ export default function ClassePage() {
                       </button>
                     </>
                   ) : (
-                    <Link href="/auth" className="ostadi-btn-orange" style={{ width: '100%', padding: '14px', justifyContent: 'center', fontSize: '14.5px', textDecoration: 'none' }}>
+                    <Link href="/auth" className="os-btn-chalk" style={{ width: '100%', padding: '14px', justifyContent: 'center', fontSize: '14.5px', textDecoration: 'none' }}>
                       {isRTL ? "سجّل الدخول لطلب الوصول" : "Connectez-vous pour demander l'accès"}
                     </Link>
                   )}
@@ -522,7 +504,7 @@ export default function ClassePage() {
 
           {/* ═══ RATING ═══ */}
           {isEnrolled && attended && (
-            <div className="ostadi-card" style={{ padding: '20px' }}>
+            <div className="os-glass-2" style={{ padding: '20px' }}>
               <h2 style={{ color: 'white', fontWeight: 700, fontSize: '15px', margin: '0 0 14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Star style={{ width: '17px', height: '17px', color: '#FF8C00' }} />
                 {isRTL ? "تقييم الأستاذ" : "Évaluer le professeur"}
@@ -532,7 +514,7 @@ export default function ClassePage() {
                   <CheckCircle style={{ width: '15px', height: '15px' }} /> {isRTL ? "لقد قيّمت هذا الدرس بالفعل" : "Vous avez déjà évalué ce cours"}
                 </div>
               ) : (
-                <button onClick={() => setShowRating(true)} className="ostadi-btn-orange" style={{ fontSize: '13px', padding: '9px 18px' }}>
+                <button onClick={() => setShowRating(true)} className="os-btn-chalk" style={{ fontSize: '13px', padding: '9px 18px' }}>
                   <Star style={{ width: '14px', height: '14px' }} /> {isRTL ? "قيّم الآن" : "Évaluer maintenant"}
                 </button>
               )}
@@ -541,7 +523,7 @@ export default function ClassePage() {
 
           {/* ═══ CALENDRIER DES SÉANCES ═══ */}
           {isMultiSession && (
-            <div className="ostadi-card" style={{ padding: '20px' }}>
+            <div className="os-glass-2" style={{ padding: '20px' }}>
               <h2 style={{
                 color: 'white', fontWeight: 700, fontSize: '15px', margin: '0 0 4px',
                 display: 'flex', alignItems: 'center', gap: '9px',
@@ -593,7 +575,7 @@ export default function ClassePage() {
 
           {/* ═══ INFO ROW ═══ */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
-            <div className="ostadi-card ostadi-card-hover" style={{ padding: '18px' }}>
+            <div className="os-glass-2 os-card" style={{ padding: '18px' }}>
               <h3 style={{ color: '#8b7bb8', fontSize: '11.5px', fontWeight: 700, margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>{isRTL ? "الأستاذ" : "Professeur"}</h3>
               <Link href={`/professeur/${classe.teacherId}`} style={{ display: 'flex', alignItems: 'center', gap: '12px', textDecoration: 'none' }}>
                 <div style={{
@@ -611,7 +593,7 @@ export default function ClassePage() {
               </Link>
             </div>
 
-            <div className="ostadi-card ostadi-card-hover" style={{ padding: '18px' }}>
+            <div className="os-glass-2 os-card" style={{ padding: '18px' }}>
               <h3 style={{ color: '#8b7bb8', fontSize: '11.5px', fontWeight: 700, margin: '0 0 14px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>{isRTL ? "التفاصيل" : "Détails"}</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -644,7 +626,7 @@ export default function ClassePage() {
               targetName={classe.title}
             />
           </div>
-        </div>
+        </Sequence>
       </div>
 
       {showRating && classe && user && (
@@ -659,14 +641,7 @@ export default function ClassePage() {
       )}
 
       <style jsx global>{`
-        .ostadi-card {
-          background: linear-gradient(145deg, rgba(20,8,45,0.9), rgba(15,5,30,0.9));
-          border: 1px solid rgba(124,58,237,0.18); border-radius: 18px;
-          backdrop-filter: blur(20px);
-          transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
-        }
         .ostadi-card-glow { box-shadow: 0 8px 32px rgba(124,58,237,0.08), inset 0 1px 0 rgba(255,255,255,0.03); }
-        .ostadi-card-hover:hover { border-color: rgba(168,85,247,0.35); transform: translateY(-2px); box-shadow: 0 12px 24px rgba(124,58,237,0.12); }
         .ostadi-back-link:hover { background: rgba(124,58,237,0.12); color: white; gap: 10px; }
         .ostadi-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700; padding: 5px 13px; border-radius: 999px; letter-spacing: 0.2px; }
         .ostadi-badge-purple { background: rgba(124,58,237,0.18); color: #d8b4fe; border: 1px solid rgba(168,85,247,0.25); }
@@ -675,14 +650,6 @@ export default function ClassePage() {
         .ostadi-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #ef4444; animation: livePulse 1.4s ease-in-out infinite; }
         .ostadi-live-dot-sm { width: 6px; height: 6px; border-radius: 50%; background: white; animation: livePulse 1.4s ease-in-out infinite; display: inline-block; }
         @keyframes livePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
-        .ostadi-btn-orange {
-          display: inline-flex; align-items: center; gap: 7px;
-          background: linear-gradient(135deg, #FF8C00, #FF6B00);
-          color: white; font-weight: 700; border: none; cursor: pointer;
-          border-radius: 12px; transition: all 0.25s cubic-bezier(0.34,1.56,0.64,1);
-          box-shadow: 0 4px 16px rgba(255,140,0,0.3);
-        }
-        .ostadi-btn-orange:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 8px 24px rgba(255,140,0,0.45); }
         .ostadi-btn-red {
           display: inline-flex; align-items: center; gap: 7px;
           background: linear-gradient(135deg, #ef4444, #dc2626);
