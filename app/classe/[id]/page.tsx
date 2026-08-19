@@ -5,7 +5,7 @@ import {
   getClasseById, getEnrollmentsByStudent,
   getRatingByStudentAndClasse, updateClasse, createNotification,
   getEnrollmentsByClasse, createEnrollmentRequest, getMyRequestForClasse,
-  trackClasseView, isClasseFull,
+  trackClasseView, isClasseFull, isTeacherLive, subscribeToClasse,
 } from "@/lib/firestore";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
@@ -22,6 +22,7 @@ import WaitlistButton from "@/components/WaitlistButton";
 import ProgressTracker from "@/components/ProgressTracker";
 import AttendanceReport from "@/components/AttendanceReport";
 import { useAttendance } from "@/lib/useAttendance";
+import { WaitingRoom, useTeacherPresence } from "@/components/WaitingRoom";
 import { trSubject, trLevel, trWilaya, trPriceType } from "@/lib/i18n/translate";
 import Link from "next/link";
 import { getCourseAccess, timeUntil } from "@/lib/course-access";
@@ -52,6 +53,21 @@ export default function ClassePage() {
   }, []);
 
   useEffect(() => { if (id) loadClasse(); }, [id, user]);
+
+  /**
+   * Écoute du cours en temps réel.
+   *
+   * L'élève qui patiente voit le passage en direct sans rafraîchir —
+   * c'est la différence entre attendre et surveiller un écran en
+   * appuyant sur F5.
+   */
+  useEffect(() => {
+    if (!id) return;
+    const unsub = subscribeToClasse(id as string, updated => {
+      if (updated) setClasse(prev => (prev ? { ...prev, ...updated } : updated));
+    });
+    return () => unsub();
+  }, [id]);
 
   /**
    * Comptage de la vue.
@@ -120,6 +136,18 @@ export default function ClassePage() {
    * et chronométrée : un parent voit que son enfant est resté douze
    * minutes sur une séance d'une heure.
    */
+  /**
+   * Signal de présence — professeur uniquement.
+   *
+   * Aucun bouton à cliquer : ouvrir la salle suffit. Un professeur
+   * qui oubliait de se signaler laissait ses élèves devant une visio
+   * vide, sans savoir s'il fallait attendre ou partir.
+   */
+  useTeacherPresence({
+    classeId: (classe?.id as string) || "",
+    active: !!(classe && isTeacher && access?.open),
+  });
+
   useAttendance({
     classeId: (classe?.id as string) || "",
     classeTitle: classe?.title || "",
@@ -275,8 +303,20 @@ export default function ClassePage() {
             </div>
           </div>
 
-          {/* ═══ VIDEO ROOM (inscrits + prof) ═══ */}
-          {canAccessRoom && access?.open ? (
+          {/* ═══ SALLE D'ATTENTE ═══
+              La salle ouvre 15 minutes avant, mais tant que le
+              professeur n'est pas arrivé, il n'y a rien à voir.
+              Afficher une visio vide laisse l'élève dans le doute :
+              est-ce que ça ne marche pas, ou est-ce que personne
+              n'est là ? */}
+          {isEnrolled && !isTeacher && access?.open && !isTeacherLive(classe as any) ? (
+            <WaitingRoom
+              teacherName={classe.teacherName}
+              startsAt={access.nextSession || classe.dateTime}
+              whatsapp={classe.whatsapp}
+              classeTitle={classe.title}
+            />
+          ) : canAccessRoom && access?.open ? (
             <div className="os-glass-2" style={{ padding: '22px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px', flexWrap: 'wrap', gap: '12px' }}>
                 <h2 style={{ color: 'white', fontWeight: 700, fontSize: '15.5px', margin: 0, display: 'flex', alignItems: 'center', gap: '9px' }}>

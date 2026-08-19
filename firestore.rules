@@ -68,7 +68,12 @@ service cloud.firestore {
         // Compteur de vues : modifiable par n'importe qui, mais lui seul.
         // Un visiteur non connecté doit pouvoir être compté.
         || request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['viewCount']);
+            .hasOnly(['viewCount'])
+        // Présence du professeur — écrite automatiquement toutes les
+        // 30 secondes pendant qu'il est en salle
+        || (isAuth() && resource.data.teacherId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['teacherPresent', 'teacherLastSeenAt', 'liveStartedAt', 'status']));
       allow delete: if isAdmin()
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }

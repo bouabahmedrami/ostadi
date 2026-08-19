@@ -69,6 +69,19 @@ export interface Classe {
   viewCount?: number;
   /** Identifiant du cours d'origine, si celui-ci a été reconduit */
   duplicatedFrom?: string;
+
+  /**
+   * Présence du professeur en salle.
+   *
+   * Écrite automatiquement à l'ouverture de la salle, avec un
+   * battement toutes les 30 secondes. `teacherLastSeenAt` fait foi :
+   * si la connexion du professeur lâche, le booléen resterait à vrai
+   * indéfiniment.
+   */
+  teacherPresent?: boolean;
+  teacherLastSeenAt?: string;
+  /** Heure réelle de démarrage, à comparer à l'horaire annoncé */
+  liveStartedAt?: string;
 }
 
 export interface Enrollment {

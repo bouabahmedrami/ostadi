@@ -3094,7 +3094,7 @@ export async function getCertificateData(
   const e = enrollSnap.docs[0].data() as any;
 
   const sessions: string[] = Array.isArray(c.sessions) && c.sessions.length > 0
-    ? [...c.sessions].sort()
+    ? [...c.sessions].sort((a, b) => parseSessionDate(a) - parseSessionDate(b))
     : [c.dateTime];
 
   const notes = progressSnap.docs.map(d => d.data() as any);
@@ -3148,9 +3148,19 @@ export async function getCertifiableClasses(studentId: string) {
 
     // Seuls les cours terminés donnent lieu à une attestation
     const sessions: string[] = Array.isArray(c.sessions) && c.sessions.length > 0
-      ? [...c.sessions].sort()
+      ? [...c.sessions].sort((a, b) => parseSessionDate(a) - parseSessionDate(b))
       : [c.dateTime];
-    const lastMs = new Date(sessions[sessions.length - 1]).getTime();
+
+    /**
+     * ⚠️ parseSessionDate, pas new Date().
+     *
+     * Le même décalage d'une heure que sur l'ouverture des salles :
+     * un cours terminé depuis peu était considéré comme encore à
+     * venir, donc absent de la liste des attestations.
+     */
+    const lastMs = parseSessionDate(sessions[sessions.length - 1]);
+    if (Number.isNaN(lastMs)) continue;
+
     const isOver = c.status === "ended" || lastMs < Date.now();
 
     if (!isOver) continue;
@@ -3846,4 +3856,105 @@ export async function getStudentAttendanceHistory(studentId: string) {
       ? Math.round(counted.reduce((s, x) => s + (x.durationMinutes || 0), 0) / counted.length)
       : 0,
   };
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// PRÉSENCE DU PROFESSEUR EN SALLE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Délai avant de considérer le professeur absent, en secondes.
+ *
+ * Le battement de cœur est envoyé toutes les 30 secondes. On tolère
+ * deux battements manqués avant de basculer : sur un réseau algérien,
+ * une coupure de trente secondes est courante et ne signifie pas que
+ * le professeur est parti. Au-delà de quatre-vingt-dix, en revanche,
+ * il a bien quitté la salle.
+ */
+export const TEACHER_ABSENT_AFTER_SEC = 90;
+
+/**
+ * Signale que le professeur est en salle.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Pourquoi une détection automatique plutôt que le bouton
+ * « Marquer Live » :
+ *
+ * Le bouton existe, mais un professeur qui démarre son cours en
+ * retard, ou qui l'oublie simplement, laissait ses élèves devant
+ * une salle vide sans savoir s'il fallait attendre ou partir.
+ *
+ * Ici, le seul fait d'ouvrir la salle suffit. Le professeur n'a
+ * rien à cliquer, et l'élève voit exactement ce qui se passe.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function setTeacherPresence(
+  classeId: string,
+  present: boolean
+): Promise<void> {
+  const now = new Date().toISOString();
+
+  const data: any = {
+    teacherPresent: present,
+    teacherLastSeenAt: now,
+  };
+
+  // Première arrivée : on note l'heure réelle de démarrage.
+  // Utile pour comparer l'horaire annoncé et l'horaire tenu.
+  if (present) {
+    const snap = await getDoc(doc(db, "classes", classeId));
+    if (snap.exists() && !(snap.data() as any).liveStartedAt) {
+      data.liveStartedAt = now;
+      data.status = "live";
+    }
+  }
+
+  try {
+    await updateDoc(doc(db, "classes", classeId), data);
+  } catch (err) {
+    // Non bloquant : le cours doit pouvoir avoir lieu même si
+    // l'écriture échoue
+    console.warn("Présence du professeur non enregistrée :", err);
+  }
+}
+
+/**
+ * Le professeur est-il réellement en salle ?
+ *
+ * On ne se fie pas au seul booléen : si la connexion du professeur
+ * a lâché, `teacherPresent` reste à vrai indéfiniment. La date du
+ * dernier battement fait foi.
+ */
+export function isTeacherLive(classe: {
+  teacherPresent?: boolean;
+  teacherLastSeenAt?: string;
+  status?: string;
+}): boolean {
+  if (!classe.teacherPresent) return false;
+  if (!classe.teacherLastSeenAt) return false;
+
+  const elapsed = (Date.now() - new Date(classe.teacherLastSeenAt).getTime()) / 1000;
+  return elapsed < TEACHER_ABSENT_AFTER_SEC;
+}
+
+/**
+ * Écoute l'état d'un cours en temps réel.
+ *
+ * L'élève qui attend voit le passage en direct sans rafraîchir sa
+ * page — c'est la différence entre « j'attends » et « je surveille
+ * un écran en appuyant sur F5 ».
+ */
+export function subscribeToClasse(
+  classeId: string,
+  callback: (classe: any | null) => void
+) {
+  return onSnapshot(
+    doc(db, "classes", classeId),
+    snap => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    err => {
+      console.warn("Écoute du cours interrompue :", err);
+      callback(null);
+    }
+  );
 }
