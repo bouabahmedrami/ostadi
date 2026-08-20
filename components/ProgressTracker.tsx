@@ -66,8 +66,9 @@ export default function ProgressTracker({
       if (isTeacher) {
         setGroups(await getClasseProgress(classeId));
       } else if (studentId) {
-        const notes = await getProgressNotes(classeId, studentId);
-        setMyNotes(notes.filter(n => n.sharedWithStudent));
+        // Le filtre est appliqué côté base : la règle Firestore
+        // n'autorise l'élève à lire que les notes partagées.
+        setMyNotes(await getProgressNotes(classeId, studentId));
       }
     } catch (err) {
       console.error("Chargement de la progression échoué :", err);

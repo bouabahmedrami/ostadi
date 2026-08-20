@@ -2997,15 +2997,31 @@ titleAr: "📈 ملاحظة جديدة من أستاذك",
 /** Notes d'un élève sur un cours */
 export async function getProgressNotes(
   classeId: string,
-  studentId: string
+  studentId: string,
+  /** Côté professeur : inclut les notes privées */
+  includePrivate = false
 ): Promise<ProgressNote[]> {
-  const snap = await getDocs(
-    query(
-      collection(db, "progress"),
-      where("classeId", "==", classeId),
-      where("studentId", "==", studentId)
-    )
-  );
+  /**
+   * ⚠️ Le filtre sur `sharedWithStudent` n'est pas cosmétique.
+   *
+   * La règle Firestore n'autorise l'élève à lire que les notes
+   * partagées. Sans ce filtre, une requête renvoyant une seule note
+   * privée échouait ENTIÈREMENT — Firestore évalue ses règles
+   * document par document, et refuse toute la requête plutôt que
+   * d'en retirer les documents interdits.
+   *
+   * Résultat : dès que le professeur écrivait une observation
+   * privée, l'élève ne voyait plus aucune note, et l'attestation
+   * refusait de se générer.
+   */
+  const conditions = [
+    where("classeId", "==", classeId),
+    where("studentId", "==", studentId),
+    ...(includePrivate ? [] : [where("sharedWithStudent", "==", true)]),
+  ];
+
+  const snap = await getDocs(query(collection(db, "progress"), ...conditions));
+
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() } as ProgressNote))
     .sort((a, b) => b.sessionDate.localeCompare(a.sessionDate));
@@ -3073,18 +3089,13 @@ export async function getCertificateData(
   classeId: string,
   studentId: string
 ): Promise<CertificateData | null> {
-  const [classeSnap, enrollSnap, progressSnap] = await Promise.all([
+  const [classeSnap, enrollSnap] = await Promise.all([
     getDoc(doc(db, "classes", classeId)),
     getDocs(query(
       collection(db, "enrollments"),
       where("classeId", "==", classeId),
       where("studentId", "==", studentId),
       limit(1)
-    )),
-    getDocs(query(
-      collection(db, "progress"),
-      where("classeId", "==", classeId),
-      where("studentId", "==", studentId)
     )),
   ]);
 
@@ -3093,11 +3104,39 @@ export async function getCertificateData(
   const c = classeSnap.data() as any;
   const e = enrollSnap.docs[0].data() as any;
 
+  /**
+   * ⚠️ Les notes de progression sont lues à part, et sans bloquer.
+   *
+   * C'était la cause de l'échec : la requête ne filtrait pas sur
+   * `sharedWithStudent`, alors que la règle Firestore n'autorise
+   * l'élève à lire que les notes partagées.
+   *
+   * Firestore évalue ses règles document par document — une requête
+   * qui renvoie ne serait-ce qu'un document interdit échoue
+   * entièrement. Il suffisait donc d'UNE note privée du professeur
+   * pour que l'attestation refuse de se générer.
+   *
+   * Le filtre est ajouté, et le tout enveloppé : l'appréciation est
+   * un ornement, elle ne doit jamais empêcher la délivrance du
+   * document.
+   */
+  let notes: any[] = [];
+  try {
+    const progressSnap = await getDocs(query(
+      collection(db, "progress"),
+      where("classeId", "==", classeId),
+      where("studentId", "==", studentId),
+      where("sharedWithStudent", "==", true)
+    ));
+    notes = progressSnap.docs.map(d => d.data() as any);
+  } catch (err) {
+    console.warn("Appréciation indisponible :", err);
+  }
+
   const sessions: string[] = Array.isArray(c.sessions) && c.sessions.length > 0
     ? [...c.sessions].sort((a, b) => parseSessionDate(a) - parseSessionDate(b))
     : [c.dateTime];
 
-  const notes = progressSnap.docs.map(d => d.data() as any);
   const lastNote = notes.sort((a, b) =>
     b.sessionDate.localeCompare(a.sessionDate)
   )[0];
