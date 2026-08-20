@@ -3262,6 +3262,19 @@ export async function followTeacher(data: {
     followerCount: increment(1),
   });
 
+  /**
+   * Le compteur est aussi recopié sur les cours du professeur.
+   *
+   * Sans cette duplication, trier une grille de cinquante cours par
+   * popularité demanderait cinquante lectures de profils — soit la
+   * moitié du quota quotidien de Firestore pour une seule page.
+   */
+  try {
+    await syncFollowerCountToClasses(data.teacherId);
+  } catch (err) {
+    console.warn("Propagation du compteur échouée :", err);
+  }
+
   // Le professeur voit sa communauté grandir — c'est ce qui le
   // pousse à publier davantage
   try {
@@ -3301,6 +3314,77 @@ export async function unfollowTeacher(
   await updateDoc(doc(db, "users", teacherId), {
     followerCount: Math.max(current - 1, 0),
   });
+
+  try {
+    await syncFollowerCountToClasses(teacherId);
+  } catch (err) {
+    console.warn("Propagation du compteur échouée :", err);
+  }
+}
+
+/** Recopie le nombre d'abonnés sur tous les cours d'un professeur */
+export async function syncFollowerCountToClasses(teacherId: string): Promise<void> {
+  const [userSnap, classesSnap] = await Promise.all([
+    getDoc(doc(db, "users", teacherId)),
+    getDocs(query(collection(db, "classes"), where("teacherId", "==", teacherId))),
+  ]);
+
+  if (!userSnap.exists() || classesSnap.empty) return;
+
+  const count = (userSnap.data() as any).followerCount || 0;
+
+  // Firestore limite un lot à 500 opérations
+  const docs = classesSnap.docs;
+  for (let i = 0; i < docs.length; i += 450) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 450).forEach(d => {
+      batch.update(d.ref, { teacherFollowers: count });
+    });
+    await batch.commit();
+  }
+}
+
+/**
+ * Prévient les abonnés d'un professeur qu'un nouveau cours est publié.
+ *
+ * C'est tout l'intérêt de suivre quelqu'un : être averti sans avoir à
+ * surveiller la page. Sans cette notification, l'abonnement ne serait
+ * qu'un compteur décoratif.
+ */
+export async function notifyFollowersOfNewClasse(data: {
+  teacherId: string;
+  teacherName: string;
+  classeId: string;
+  classeTitle: string;
+  subject: string;
+}): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "follows"), where("teacherId", "==", data.teacherId))
+  );
+  if (snap.empty) return 0;
+
+  const now = new Date().toISOString();
+  const followers = snap.docs.map(d => (d.data() as any).studentId).filter(Boolean);
+
+  for (let i = 0; i < followers.length; i += 400) {
+    const batch = writeBatch(db);
+    followers.slice(i, i + 400).forEach(uid => {
+      batch.set(doc(collection(db, "notifications")), {
+        userId: uid,
+        type: "course_starting",
+        title: `📚 Nouveau cours de ${data.teacherName}`,
+        titleAr: `📚 درس جديد من ${data.teacherName}`,
+        body: `« ${data.classeTitle} » vient d'être publié.`,
+        bodyAr: `تمّ نشر « ${data.classeTitle} ».`,
+        link: `/classe/${data.classeId}`,
+        read: false,
+        createdAt: now,
+      });
+    });
+    await batch.commit();
+  }
+
+  return followers.length;
 }
 
 export async function isFollowing(

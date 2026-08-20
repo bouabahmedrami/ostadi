@@ -24,6 +24,7 @@ import Sheet from "@/components/Sheet";
 import { useToast } from "@/components/Toast";
 import { haptic } from "@/lib/haptics";
 import { toAbsoluteISO } from "@/lib/course-access";
+import { notifyFollowersOfNewClasse } from "@/lib/firestore";
 import ResponseBadge from "@/components/ResponseBadge";
 import ProgressTracker from "@/components/ProgressTracker";
 import AttendanceReport from "@/components/AttendanceReport";
@@ -125,7 +126,7 @@ export default function DashboardPage() {
     setCreating(true);
     try {
       const jitsiRoom = generateJitsiRoom(profile!.displayName, form.title);
-      await createClasse({
+      const newId = await createClasse({
         ...form,
         /**
          * ⚠️ Normalisation obligatoire.
@@ -152,6 +153,8 @@ export default function DashboardPage() {
         teacherPhoto: (profile as any)?.photoURL || "",
         // Un prof jamais noté a rating undefined — Firestore le refuse
         teacherRating: profile?.rating ?? 0,
+        // Permet de trier par popularité sans lire chaque profil
+        teacherFollowers: (profile as any)?.followerCount ?? 0,
         jitsiRoom,
         enrolledCount: 0,
         attendanceCount: 0,
@@ -161,6 +164,33 @@ export default function DashboardPage() {
       });
       setShowCreateModal(false);
       toast.success(isRTL ? "تم إنشاء الدرس" : "Cours créé");
+
+      /**
+       * Les abonnés sont prévenus.
+       *
+       * C'est tout l'intérêt de suivre un professeur : être averti
+       * sans avoir à surveiller la page. Sans cette notification,
+       * l'abonnement ne serait qu'un compteur décoratif.
+       *
+       * Volontairement non bloquant : un cours créé reste créé même
+       * si l'envoi échoue.
+       */
+      notifyFollowersOfNewClasse({
+        teacherId: user!.uid,
+        teacherName: profile!.displayName,
+        classeId: newId,
+        classeTitle: form.title,
+        subject: form.subject,
+      })
+        .then(n => {
+          if (n > 0) {
+            toast.toast(
+              isRTL ? `تم إعلام ${n} متابع` : `${n} abonnés prévenus`,
+              "info"
+            );
+          }
+        })
+        .catch(err => console.warn("Notification des abonnés échouée :", err));
       setForm({ title: "", subject: SUBJECTS[0], level: LEVELS[0], dateTime: "", durationMinutes: 60, price: 500, priceType: "session", description: "", whatsapp: "", wilaya: "Alger", maxStudents: undefined });
       setSessions([]);
       await loadData();

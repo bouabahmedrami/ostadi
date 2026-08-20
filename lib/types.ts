@@ -41,6 +41,8 @@ export interface Classe {
   teacherName: string;
   teacherPhoto?: string;
   teacherRating?: number;
+  /** Abonnés du professeur — recopié pour permettre le tri sans lire son profil */
+  teacherFollowers?: number;
   title: string;
   subject: string;
   level: string;          // e.g. "3ème Moyenne", "Terminale S"

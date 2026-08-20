@@ -73,7 +73,11 @@ service cloud.firestore {
         // 30 secondes pendant qu'il est en salle
         || (isAuth() && resource.data.teacherId == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['teacherPresent', 'teacherLastSeenAt', 'liveStartedAt', 'status']));
+               .hasOnly(['teacherPresent', 'teacherLastSeenAt', 'liveStartedAt', 'status']))
+        // Compteur d'abonnés recopié sur les cours : écrit par l'élève
+        // qui suit ou se désabonne, mais ce champ seul
+        || (isAuth() && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(['teacherFollowers']));
       allow delete: if isAdmin()
         || (isTeacher() && resource.data.teacherId == request.auth.uid);
     }

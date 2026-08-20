@@ -3,7 +3,7 @@ import { Classe } from "@/lib/types";
 import { useLang } from "@/lib/lang-context";
 import { trSubject, trLevel, trWilaya, trPriceType, formatDateLocal } from "@/lib/i18n/translate";
 import {
-  Star, Users, Clock, MapPin, MessageCircle, Calendar, ArrowRight, Eye,
+  Star, Users, Clock, MapPin, MessageCircle, Calendar, ArrowRight, Eye, Heart,
 } from "lucide-react";
 import Link from "next/link";
 import Avatar from "./Avatar";
@@ -70,6 +70,7 @@ export default function ClasseCard({
   const isMultiSession = Array.isArray(sessions) && sessions.length > 1;
 
   const views = (classe as any).viewCount ?? 0;
+  const followers = (classe as any).teacherFollowers ?? 0;
   const DA = isRTL ? "دج" : "DA";
 
   return (
@@ -199,14 +200,26 @@ export default function ClasseCard({
           />
           <span className="cc-teacher-info">
             <span className="cc-teacher-name">{classe.teacherName}</span>
-            {(classe.teacherRating ?? 0) > 0 ? (
-              <span className="cc-rating">
-                <Star size={11} style={{ fill: "#FF8C00", color: "#FF8C00" }} />
-                {(classe.teacherRating ?? 0).toFixed(1)}
-              </span>
-            ) : (
-              <span className="cc-new">{isRTL ? "أستاذ جديد" : "Nouveau"}</span>
-            )}
+            <span className="cc-teacher-meta">
+              {(classe.teacherRating ?? 0) > 0 ? (
+                <span className="cc-rating">
+                  <Star size={11} style={{ fill: "#FF8C00", color: "#FF8C00" }} />
+                  {(classe.teacherRating ?? 0).toFixed(1)}
+                </span>
+              ) : (
+                <span className="cc-new">{isRTL ? "أستاذ جديد" : "Nouveau"}</span>
+              )}
+
+              {/* Les abonnés disent quelque chose que la note ne dit
+                  pas : un professeur peut avoir 5 étoiles sur trois
+                  avis, ou 4,2 sur deux cents élèves fidèles. */}
+              {followers > 0 && (
+                <span className="cc-followers">
+                  <Heart size={10} />
+                  {followers}
+                </span>
+              )}
+            </span>
           </span>
           <ArrowRight size={14} className="cc-arrow os-flip" />
         </Link>
@@ -398,6 +411,21 @@ export default function ClasseCard({
           color: #6d28d9;
           font-size: 11px;
         }
+        .cc-teacher-meta {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          flex-wrap: wrap;
+        }
+        .cc-followers {
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          color: #a78bfa;
+          font-size: 11px;
+          font-weight: 600;
+        }
+        .cc-followers :global(svg) { color: #7c3aed; }
         .cc-arrow {
           color: #4c1d95;
           flex-shrink: 0;

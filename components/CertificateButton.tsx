@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { useLang } from "@/lib/lang-context";
 import { trSubject } from "@/lib/i18n/translate";
 import { getCertifiableClasses, getCertificateData } from "@/lib/firestore";
@@ -35,6 +36,9 @@ export default function CertificateButton({ studentId }: { studentId: string }) 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [preview, setPreview] = useState<any>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => { load(); }, [studentId]);
 
@@ -148,8 +152,19 @@ export default function CertificateButton({ studentId }: { studentId: string }) 
         </div>
       </div>
 
-      {/* ═══ APERÇU ET IMPRESSION ═══ */}
-      {preview && (
+      {/* ═══ APERÇU ET IMPRESSION ═══
+          ⚠️ Rendu dans <body> via un portail.
+
+          C'était la cause de la page blanche à l'impression : la règle
+          `body > *:not(.cb-overlay)` masque les enfants DIRECTS de
+          <body>. Or l'aperçu était imbriqué à six niveaux de
+          profondeur, dans le conteneur racine de Next.js — lequel est,
+          lui, un enfant direct. Il était donc masqué avec tout le
+          reste, l'attestation comprise.
+
+          Le portail place l'aperçu au même niveau que le conteneur
+          racine. La règle peut alors masquer l'un sans l'autre. */}
+      {preview && mounted && createPortal(
         <div className="cb-overlay">
           {/* Barre d'action — masquée à l'impression */}
           <div className="cb-bar">
@@ -172,7 +187,8 @@ export default function CertificateButton({ studentId }: { studentId: string }) 
               ? "في نافذة الطباعة، اختر « حفظ بصيغة PDF »."
               : "Dans la fenêtre d'impression, choisissez « Enregistrer au format PDF »."}
           </p>
-        </div>
+        </div>,
+        document.body
       )}
 
       <style jsx global>{`
@@ -244,19 +260,43 @@ export default function CertificateButton({ studentId }: { studentId: string }) 
            le document principal, pas une fenêtre ni un iframe.
            ═══════════════════════════════════════════════════ */
         @media print {
+          /* Tout ce qui n'est pas l'aperçu disparaît. L'aperçu étant
+             porté directement dans <body>, il échappe à la règle. */
           body > *:not(.cb-overlay) { display: none !important; }
+
+          html, body {
+            background: #fff !important;
+            height: auto !important;
+            overflow: visible !important;
+            /* Les halos du fond sont en position fixe : sans ça, ils
+               se répètent sur chaque page imprimée */
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
           .cb-overlay {
             position: static !important;
             background: #fff !important;
             overflow: visible !important;
             display: block !important;
+            height: auto !important;
           }
           .cb-bar, .cb-hint { display: none !important; }
           .cb-scroll {
             overflow: visible !important;
             padding: 0 !important;
             display: block !important;
+            height: auto !important;
           }
+
+          /* Les couleurs et bordures de l'attestation doivent
+             survivre : par défaut, les navigateurs les retirent
+             pour économiser l'encre. */
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
           @page { size: A4; margin: 0; }
         }
       `}</style>

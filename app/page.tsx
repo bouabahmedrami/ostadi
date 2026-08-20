@@ -18,7 +18,7 @@ import { ClasseGridSkeleton, EmptyState } from "@/components/Skeletons";
 import { ChalkUnderline } from "@/components/Chalk";
 import { haptic } from "@/lib/haptics";
 import { isSessionPast, parseSessionDate } from "@/lib/course-access";
-type SortKey = "rating" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
+type SortKey = "rating" | "followers" | "price_asc" | "price_desc" | "date_asc" | "date_desc" | "popular";
 
 export default function HomePage() {
   const { t, isRTL } = useLang();
@@ -109,10 +109,20 @@ export default function HomePage() {
     // Tri
     switch (sortBy) {
       case "rating": list.sort((a, b) => (b.teacherRating || 0) - (a.teacherRating || 0)); break;
+      /**
+       * Tri par abonnés — dit autre chose que la note.
+       *
+       * Un professeur peut avoir cinq étoiles sur trois avis, ou
+       * quatre virgule deux sur deux cents élèves qui reviennent.
+       * Le second inspire davantage confiance à un parent.
+       */
+      case "followers": list.sort((a, b) =>
+        ((b as any).teacherFollowers || 0) - ((a as any).teacherFollowers || 0)
+      ); break;
       case "price_asc": list.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
       case "price_desc": list.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
-      case "date_asc": list.sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()); break;
-      case "date_desc": list.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()); break;
+      case "date_asc": list.sort((a, b) => parseSessionDate(a.dateTime) - parseSessionDate(b.dateTime)); break;
+      case "date_desc": list.sort((a, b) => parseSessionDate(b.dateTime) - parseSessionDate(a.dateTime)); break;
       case "popular": list.sort((a, b) => (b.enrolledCount || 0) - (a.enrolledCount || 0)); break;
     }
     return list;
@@ -139,6 +149,7 @@ export default function HomePage() {
   const sortLabels: Record<SortKey, string> = {
     rating: isRTL ? "الأعلى تقييماً" : "Mieux notés",
     popular: isRTL ? "الأكثر شعبية" : "Plus populaires",
+    followers: isRTL ? "الأكثر متابعة" : "Plus suivis",
     price_asc: isRTL ? "السعر ↑" : "Prix croissant",
     price_desc: isRTL ? "السعر ↓" : "Prix décroissant",
     date_asc: isRTL ? "الأقرب" : "Date proche",
