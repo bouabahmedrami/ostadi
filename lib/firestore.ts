@@ -1,7 +1,7 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc,
   query, where, orderBy, setDoc, deleteDoc, writeBatch, limit,
-  increment,
+  increment, documentId,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { parseSessionDate, CLOSE_AFTER_MIN } from "./course-access";
@@ -259,13 +259,26 @@ export async function getPublicTeacherProfile(uid: string): Promise<UserProfile 
 }
 
 export async function getTeacherClasses(teacherId: string): Promise<Classe[]> {
-  const q = query(
-    collection(db, "classes"),
-    where("teacherId", "==", teacherId),
-    orderBy("dateTime", "asc")
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe));
+  const [classesSnap, userSnap] = await Promise.all([
+    getDocs(query(
+      collection(db, "classes"),
+      where("teacherId", "==", teacherId),
+      orderBy("dateTime", "asc")
+    )),
+    getDoc(doc(db, "users", teacherId)),
+  ]);
+
+  // Une seule lecture de profil suffit ici : tous les cours sont du
+  // même professeur
+  const followers = userSnap.exists()
+    ? ((userSnap.data() as any).followerCount || 0)
+    : 0;
+
+  return classesSnap.docs.map(d => ({
+    id: d.id,
+    ...d.data(),
+    teacherFollowers: followers,
+  } as Classe));
 }
 
 // ─── Subscriptions ───────────────────────────────────────────────────
@@ -4080,4 +4093,122 @@ export function subscribeToClasse(
       callback(null);
     }
   );
+}
+
+
+/**
+ * Recalcule et propage le nombre d'abonnés de TOUS les professeurs.
+ *
+ * À lancer une fois depuis le panneau admin après la mise en place
+ * du suivi : les cours créés avant n'ont pas le champ
+ * `teacherFollowers`, donc affichent zéro abonné et faussent le tri
+ * par popularité.
+ *
+ * Recompte à partir de la collection `follows` plutôt que de se fier
+ * au compteur du profil : si un document a été supprimé à la main en
+ * console, les deux ont divergé.
+ */
+export async function syncAllFollowerCounts(): Promise<{
+  teachers: number;
+  classes: number;
+}> {
+  const [followsSnap, classesSnap] = await Promise.all([
+    getDocs(collection(db, "follows")),
+    getDocs(collection(db, "classes")),
+  ]);
+
+  // Comptage réel par professeur
+  const counts = new Map<string, number>();
+  followsSnap.docs.forEach(d => {
+    const tid = (d.data() as any).teacherId;
+    if (tid) counts.set(tid, (counts.get(tid) || 0) + 1);
+  });
+
+  // Profils
+  const teacherIds = new Set<string>([
+    ...counts.keys(),
+    ...classesSnap.docs.map(d => (d.data() as any).teacherId).filter(Boolean),
+  ]);
+
+  const ids = [...teacherIds];
+  for (let i = 0; i < ids.length; i += 450) {
+    const batch = writeBatch(db);
+    ids.slice(i, i + 450).forEach(uid => {
+      batch.update(doc(db, "users", uid), { followerCount: counts.get(uid) || 0 });
+    });
+    await batch.commit();
+  }
+
+  // Cours
+  const docs = classesSnap.docs;
+  for (let i = 0; i < docs.length; i += 450) {
+    const batch = writeBatch(db);
+    docs.slice(i, i + 450).forEach(d => {
+      const tid = (d.data() as any).teacherId;
+      batch.update(d.ref, { teacherFollowers: counts.get(tid) || 0 });
+    });
+    await batch.commit();
+  }
+
+  return { teachers: ids.length, classes: docs.length };
+}
+
+
+/**
+ * Complète une liste de cours avec les données à jour de leurs
+ * professeurs — abonnés, note, photo.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Pourquoi cette fonction plutôt que la seule duplication.
+ *
+ * Les champs `teacherFollowers`, `teacherRating` et `teacherPhoto`
+ * sont recopiés sur chaque cours à sa création, pour éviter de lire
+ * cinquante profils à l'affichage d'une grille.
+ *
+ * Mais cette copie se démode : un professeur qui gagne dix abonnés
+ * après avoir publié son cours garde l'ancien chiffre. Et les cours
+ * créés avant l'ajout du suivi n'ont pas le champ du tout.
+ *
+ * Ici on relit les profils UNE FOIS par lot de dix, ce qui fait
+ * trois à cinq lectures pour une page entière au lieu de cinquante.
+ * Les chiffres sont exacts, sans dépendre d'une synchronisation
+ * qu'il faudrait penser à relancer.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function enrichClassesWithTeacherData(
+  classes: Classe[]
+): Promise<Classe[]> {
+  if (classes.length === 0) return classes;
+
+  const teacherIds = [...new Set(classes.map(c => c.teacherId).filter(Boolean))];
+  if (teacherIds.length === 0) return classes;
+
+  const profiles = new Map<string, any>();
+
+  // L'opérateur `in` plafonne à 10 valeurs
+  for (let i = 0; i < teacherIds.length; i += 10) {
+    const chunk = teacherIds.slice(i, i + 10);
+    try {
+      const snap = await getDocs(
+        query(collection(db, "users"), where(documentId(), "in", chunk))
+      );
+      snap.docs.forEach(d => profiles.set(d.id, d.data()));
+    } catch (err) {
+      // Non bloquant : mieux vaut afficher les cours avec des
+      // chiffres légèrement datés que de ne rien afficher
+      console.warn("Enrichissement partiel :", err);
+    }
+  }
+
+  return classes.map(c => {
+    const p = profiles.get(c.teacherId);
+    if (!p) return c;
+    return {
+      ...c,
+      teacherFollowers: p.followerCount || 0,
+      teacherRating: p.rating ?? c.teacherRating ?? 0,
+      teacherPhoto: p.photoURL || (c as any).teacherPhoto || "",
+      teacherName: p.displayName || c.teacherName,
+    } as Classe;
+  });
 }

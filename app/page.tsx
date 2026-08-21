@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { collection, getDocs, query, orderBy } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { autoArchiveFinishedClasses } from "@/lib/firestore";
+import { autoArchiveFinishedClasses , enrichClassesWithTeacherData } from "@/lib/firestore";
 import { Classe, SUBJECTS, LEVELS, WILAYAS } from "@/lib/types";
 import { useLang } from "@/lib/lang-context";
 import ClasseCard from "@/components/ClasseCard";
@@ -48,7 +48,24 @@ export default function HomePage() {
     try {
       await autoArchiveFinishedClasses();
       const snap = await getDocs(query(collection(db, "classes"), orderBy("dateTime", "asc")));
-      setAllClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe)));
+      const raw = snap.docs.map(d => ({ id: d.id, ...d.data() } as Classe));
+
+      /**
+       * Affichage immédiat, chiffres exacts ensuite.
+       *
+       * Les cours s'affichent tout de suite avec les données recopiées
+       * à leur création. L'enrichissement relit les profils des
+       * professeurs — trois à cinq lectures pour toute la page — et
+       * met à jour les compteurs d'abonnés, notes et photos.
+       *
+       * Sans cette étape, les cours créés avant l'ajout du suivi
+       * afficheraient zéro abonné indéfiniment.
+       */
+      setAllClasses(raw);
+
+      enrichClassesWithTeacherData(raw)
+        .then(setAllClasses)
+        .catch(err => console.warn("Enrichissement échoué :", err));
     } catch (err) {
       console.error("Chargement des cours échoué :", err);
       setAllClasses([]);
