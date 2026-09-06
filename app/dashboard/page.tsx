@@ -10,6 +10,7 @@ import Link from "next/link";
 import { trSubject, trLevel, trWilaya, formatDateLocal } from "@/lib/i18n/translate";
 import TeacherRevenue from "@/components/TeacherRevenue";
 import BilanDownload from "@/components/BilanDownload";
+import CommissionSavings from "@/components/CommissionSavings";
 import CommissionAlert from "@/components/CommissionAlert";
 import TeacherProfileForm from "@/components/TeacherProfileForm";
 import EnrollmentRequestsPanel from "@/components/EnrollmentRequestsPanel";
@@ -314,8 +315,8 @@ export default function DashboardPage() {
                 </div>
                 <div style={{ fontSize: '13px', color: '#a78bfa', marginTop: '2px' }}>
                   {isRTL
-                    ? "تظهر في مقدّمة القائمة وتنشئ دروساً غير محدودة — 2000 دج/شهر"
-                    : "Apparaissez en tête de liste et créez des cours illimités — 2 000 DA/mois"}
+                    ? "عمولة 5٪ بدل 10٪ · أولوية في النتائج — 2000 دج/شهر"
+                    : "Commission à 5 % au lieu de 10 % · Priorité dans les résultats — 2 000 DA/mois"}
                 </div>
               </div>
             </div>
@@ -489,6 +490,13 @@ export default function DashboardPage() {
         {/* ═══ TAB: REVENUS ═══ */}
         {activeTab === "revenus" && user && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* Économie de commission — le seul argument de
+                renouvellement qui tienne : le professeur voit ses
+                propres chiffres, pas une promesse. */}
+            <CommissionSavings
+              teacherId={user.uid}
+              isSubscriber={!!profile?.subscriptionActive}
+            />
             <TeacherRevenue teacherId={user.uid} />
             {profile && (
               <BilanDownload

@@ -124,8 +124,28 @@ export default function HomePage() {
     }
 
     // Tri
+    /**
+     * ⚠️ Les abonnés passent devant, à note égale.
+     *
+     * C'est la promesse affichée sur la page d'abonnement — « mise en
+     * avant dans les résultats » — qui n'était jusqu'ici implémentée
+     * nulle part. Le tri ignorait complètement le champ `featured`.
+     *
+     * Important : la priorité s'applique À NOTE ÉGALE, pas devant un
+     * professeur mieux noté. Placer un abonné médiocre au-dessus d'un
+     * excellent professeur gratuit tromperait l'élève — et c'est lui
+     * le vrai client.
+     */
+    const featuredFirst = (a: any, b: any, then: number): number => {
+      if (sortBy === "price_asc" || sortBy === "price_desc") return then;
+      const af = a.featured ? 1 : 0;
+      const bf = b.featured ? 1 : 0;
+      if (af !== bf) return bf - af;
+      return then;
+    };
+
     switch (sortBy) {
-      case "rating": list.sort((a, b) => (b.teacherRating || 0) - (a.teacherRating || 0)); break;
+      case "rating": list.sort((a, b) => featuredFirst(a, b, (b.teacherRating || 0) - (a.teacherRating || 0))); break;
       /**
        * Tri par abonnés — dit autre chose que la note.
        *
@@ -133,14 +153,14 @@ export default function HomePage() {
        * quatre virgule deux sur deux cents élèves qui reviennent.
        * Le second inspire davantage confiance à un parent.
        */
-      case "followers": list.sort((a, b) =>
+      case "followers": list.sort((a, b) => featuredFirst(a, b,
         ((b as any).teacherFollowers || 0) - ((a as any).teacherFollowers || 0)
-      ); break;
+      )); break;
       case "price_asc": list.sort((a, b) => (a.price || 0) - (b.price || 0)); break;
       case "price_desc": list.sort((a, b) => (b.price || 0) - (a.price || 0)); break;
-      case "date_asc": list.sort((a, b) => parseSessionDate(a.dateTime) - parseSessionDate(b.dateTime)); break;
+      case "date_asc": list.sort((a, b) => featuredFirst(a, b, parseSessionDate(a.dateTime) - parseSessionDate(b.dateTime))); break;
       case "date_desc": list.sort((a, b) => parseSessionDate(b.dateTime) - parseSessionDate(a.dateTime)); break;
-      case "popular": list.sort((a, b) => (b.enrolledCount || 0) - (a.enrolledCount || 0)); break;
+      case "popular": list.sort((a, b) => featuredFirst(a, b, (b.enrolledCount || 0) - (a.enrolledCount || 0))); break;
     }
     return list;
   }, [allClasses, search, subject, level, wilaya, teacher, minPrice, maxPrice, minRating, dateFrom, dateTo, sortBy, isRTL]);

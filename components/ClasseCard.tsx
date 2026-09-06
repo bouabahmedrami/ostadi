@@ -3,7 +3,7 @@ import { Classe } from "@/lib/types";
 import { useLang } from "@/lib/lang-context";
 import { trSubject, trLevel, trWilaya, trPriceType, formatDateLocal } from "@/lib/i18n/translate";
 import {
-  Star, Users, Clock, MapPin, MessageCircle, Calendar, ArrowRight, Eye, Heart,
+  Star, Users, Clock, MapPin, MessageCircle, Calendar, ArrowRight, Eye, Heart, Crown,
 } from "lucide-react";
 import Link from "next/link";
 import Avatar from "./Avatar";
@@ -71,6 +71,7 @@ export default function ClasseCard({
 
   const views = (classe as any).viewCount ?? 0;
   const followers = (classe as any).teacherFollowers ?? 0;
+  const premium = !!(classe as any).featured;
   const DA = isRTL ? "دج" : "DA";
 
   return (
@@ -199,7 +200,17 @@ export default function ClasseCard({
             accent={accent}
           />
           <span className="cc-teacher-info">
-            <span className="cc-teacher-name">{classe.teacherName}</span>
+            <span className="cc-teacher-line">
+              <span className="cc-teacher-name">{classe.teacherName}</span>
+              {/* La couronne rend l'abonnement visible — sans elle,
+                  le professeur paie pour un avantage que personne
+                  ne remarque. */}
+              {premium && (
+                <span className="cc-crown" title="Professeur Premium">
+                  <Crown size={11} />
+                </span>
+              )}
+            </span>
             <span className="cc-teacher-meta">
               {(classe.teacherRating ?? 0) > 0 ? (
                 <span className="cc-rating">
@@ -390,6 +401,23 @@ export default function ClasseCard({
           display: flex;
           flex-direction: column;
           gap: 2px;
+        }
+        .cc-teacher-line {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+        }
+        .cc-crown {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 17px;
+          height: 17px;
+          border-radius: 5px;
+          flex-shrink: 0;
+          background: rgba(255, 140, 0, 0.18);
+          color: #FF8C00;
         }
         .cc-teacher-name {
           color: #fff;

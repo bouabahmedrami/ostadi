@@ -122,6 +122,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [migrationResult, setMigrationResult] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
 
   const isAdmin = isAdminUser(user?.uid);
 
@@ -137,6 +139,19 @@ export default function AdminPage() {
     setLoadingData(true);
     setError(null);
     try {
+      /**
+       * Nettoyage des abonnements expirés.
+       *
+       * Sans lui, un professeur dont l'abonnement s'est terminé
+       * garderait sa mise en avant indéfiniment — et paierait
+       * toujours 5 % de commission. Lancé à chaque ouverture du
+       * panneau, ce qui suffit largement à ce volume.
+       */
+      import("@/lib/firestore")
+        .then(m => m.sweepExpiredFeatured())
+        .then(n => { if (n > 0) console.info(`${n} cours retirés de la mise en avant`); })
+        .catch(err => console.warn("Nettoyage des abonnements échoué :", err));
+
       const [s, u, v, sub] = await Promise.all([
         getFullPlatformStats(),
         getAllUsersForAdmin(),
@@ -260,6 +275,44 @@ export default function AdminPage() {
       );
     } finally {
       setMigrating(false);
+    }
+  }
+
+  /**
+   * Recalcule le nombre d'abonnés de tous les professeurs et le
+   * recopie sur leurs cours.
+   *
+   * Les cours créés avant la mise en place du suivi n'ont pas le
+   * champ `teacherFollowers` : ils affichent zéro abonné et faussent
+   * le tri par popularité.
+   */
+  async function runFollowerSync() {
+    const ok = await confirm(
+      isRTL ? "مزامنة عدّادات المتابعين؟" : "Synchroniser les compteurs d'abonnés ?",
+      {
+        message: isRTL
+          ? "يعيد حساب المتابعين لكل الأساتذة وينسخه على دروسهم.\nآمن، ويمكن تكراره."
+          : "Recalcule les abonnés de chaque professeur et les recopie sur ses cours.\nSans risque, peut être relancé.",
+      }
+    );
+    if (!ok) return;
+
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const { syncAllFollowerCounts } = await import("@/lib/firestore");
+      const r = await syncAllFollowerCounts();
+      setSyncResult(
+        isRTL
+          ? `✓ ${r.teachers} أستاذ · ${r.classes} درس محدّث`
+          : `✓ ${r.teachers} professeurs · ${r.classes} cours mis à jour`
+      );
+      toast.success(isRTL ? "تمت المزامنة" : "Synchronisation terminée");
+    } catch (err) {
+      console.error("Synchronisation échouée :", err);
+      setSyncResult(isRTL ? "✗ فشلت المزامنة" : "✗ Échec — voir la console");
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -720,6 +773,49 @@ export default function AdminPage() {
                     fontSize: 12.5, margin: "12px 0 0", fontWeight: 600,
                   }}>
                     {migrationResult}
+                  </p>
+                )}
+              </div>
+
+              {/* ═══ COMPTEURS D'ABONNÉS ═══ */}
+              <div style={{
+                background: "rgba(124,58,237,0.06)",
+                border: "1px solid rgba(124,58,237,0.22)",
+                borderRadius: 12, padding: 14, marginTop: 12,
+              }}>
+                <p style={{ color: "#c4b5fd", fontSize: 13, fontWeight: 700, margin: "0 0 6px" }}>
+                  {isRTL ? "مزامنة المتابعين" : "Compteurs d'abonnés"}
+                </p>
+                <p style={{ color: "#8b7bb8", fontSize: 11.5, margin: "0 0 12px", lineHeight: 1.6 }}>
+                  {isRTL
+                    ? "الدروس المنشأة قبل إضافة المتابعة لا تحمل العدّاد : تظهر بصفر متابع ويختلّ الترتيب حسب الشعبية."
+                    : "Les cours créés avant le suivi n'ont pas le compteur : ils affichent zéro abonné et faussent le tri par popularité."}
+                </p>
+
+                <button
+                  onClick={runFollowerSync}
+                  disabled={syncing}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 8,
+                    background: "linear-gradient(135deg, #7C3AED, #6D28D9)",
+                    color: "white", fontWeight: 700, padding: "11px 20px",
+                    borderRadius: 11, border: "none",
+                    cursor: syncing ? "not-allowed" : "pointer",
+                    fontSize: 13, fontFamily: "inherit",
+                    opacity: syncing ? 0.6 : 1,
+                  }}
+                >
+                  {syncing
+                    ? <><Loader2 size={15} style={{ animation: "adspin 0.8s linear infinite" }} /> {isRTL ? "جارٍ..." : "Synchronisation..."}</>
+                    : <><Users size={15} /> {isRTL ? "مزامنة العدّادات" : "Synchroniser les compteurs"}</>}
+                </button>
+
+                {syncResult && (
+                  <p style={{
+                    color: syncResult.startsWith("✓") ? "#4ade80" : "#f87171",
+                    fontSize: 12.5, margin: "12px 0 0", fontWeight: 600,
+                  }}>
+                    {syncResult}
                   </p>
                 )}
               </div>

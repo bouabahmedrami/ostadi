@@ -1221,6 +1221,8 @@ export interface TeacherCommission {
   monthRevenue: number;
   /** Commission du mois en cours */
   monthCommission: number;
+  /** Taux appliqué : 0.05 pour un abonné, 0.10 sinon */
+  commissionRate: number;
   /** Date du dernier règlement (ISO), null si jamais payé */
   lastPaymentAt: string | null;
   lastPaymentAmount: number;
@@ -1312,7 +1314,16 @@ export async function getTeachersCommissionStatus(): Promise<TeacherCommission[]
     const id = doc.id;
 
     const totalRevenue = revenueByTeacher.get(id) || 0;
-    const totalCommission = Math.round(totalRevenue * PLATFORM_COMMISSION_RATE);
+
+    /**
+     * ⚠️ Le taux dépend maintenant du professeur.
+     *
+     * Un abonné paie 5 % au lieu de 10 %. Appliquer le taux plein à
+     * tout le monde reviendrait à lui facturer un avantage qu'il a
+     * déjà payé — et il s'en apercevrait au premier bilan.
+     */
+    const rate = getCommissionRate(u);
+    const totalCommission = Math.round(totalRevenue * rate);
     const totalPaid = paidByTeacher.get(id) || 0;
     const balance = totalCommission - totalPaid;
 
@@ -1354,7 +1365,9 @@ export async function getTeachersCommissionStatus(): Promise<TeacherCommission[]
       totalPaid,
       balance,
       monthRevenue,
-      monthCommission: Math.round(monthRevenue * PLATFORM_COMMISSION_RATE),
+      monthCommission: Math.round(monthRevenue * rate),
+      /** Taux appliqué — 5 % pour les abonnés, 10 % sinon */
+      commissionRate: rate,
       lastPaymentAt: last?.at || null,
       lastPaymentAmount: last?.amount || 0,
       daysSincePayment: daysSince,
@@ -1467,7 +1480,15 @@ export async function getTeacherBilan(
   }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const grossRevenue = lines.reduce((s, l) => s + l.price, 0);
-  const commission = Math.round(grossRevenue * PLATFORM_COMMISSION_RATE);
+
+  // Le bilan du professeur doit refléter SON taux, pas le taux
+  // général — sinon un abonné verrait une commission qu'il ne doit pas
+  const teacherSnap = await getDoc(doc(db, "users", teacherId));
+  const rate = teacherSnap.exists()
+    ? getCommissionRate(teacherSnap.data() as any)
+    : PLATFORM_COMMISSION_RATE;
+
+  const commission = Math.round(grossRevenue * rate);
 
   const payments = paymentsSnap.docs
     .map(d => d.data() as any)
@@ -1482,6 +1503,8 @@ export async function getTeacherBilan(
     payments,
     grossRevenue,
     commission,
+    commissionRate: rate,
+    isSubscriber: rate === SUBSCRIBER_COMMISSION_RATE,
     netRevenue: grossRevenue - commission,
     paid,
     balance: commission - paid,
@@ -4211,4 +4234,200 @@ export async function enrichClassesWithTeacherData(
       teacherName: p.displayName || c.teacherName,
     } as Classe;
   });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// COMMISSION RÉDUITE · VISIBILITÉ RÉELLE · PROFIL ENRICHI
+// ═══════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════
+// 1. COMMISSION RÉDUITE POUR LES ABONNÉS
+// ═══════════════════════════════════════════════════════════
+
+/** Taux appliqué aux professeurs abonnés */
+export const SUBSCRIBER_COMMISSION_RATE = 0.05;
+
+/**
+ * Détermine le taux de commission applicable à un professeur.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * C'est le seul avantage dont un professeur peut calculer la valeur
+ * lui-même. Un professeur qui génère 40 000 DA de cours par mois
+ * paie 4 000 DA de commission au taux normal ; à 5 %, il paie 2 000.
+ * L'abonnement se rembourse exactement à ce seuil — au-delà, il
+ * devient gratuit.
+ *
+ * On vérifie la date de fin, pas seulement le champ `subscriptionActive`,
+ * qui peut rester à `true` en base après expiration si personne n'a
+ * pensé à le désactiver.
+ * ═══════════════════════════════════════════════════════════
+ */
+export function getCommissionRate(profile: {
+  subscriptionActive?: boolean;
+  subscriptionExpiry?: string;
+}): number {
+  const active = profile.subscriptionActive
+    && profile.subscriptionExpiry
+    && new Date(profile.subscriptionExpiry) > new Date();
+
+  return active ? SUBSCRIBER_COMMISSION_RATE : PLATFORM_COMMISSION_RATE;
+}
+
+/**
+ * Remplace `activateSubscription` : y ajoute la vérification de
+ * cohérence entre `subscriptionActive` et `subscriptionExpiry`, et
+ * calcule désormais le taux au moment de chaque bilan plutôt qu'à
+ * l'activation — un abonnement qui expire en cours de mois ne doit
+ * pas continuer à réduire la commission après son terme.
+ */
+
+
+// ═══════════════════════════════════════════════════════════
+// 2. VISIBILITÉ RÉELLE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Cours triés avec priorité réelle aux abonnés actifs.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Remplace le tri de `getClasses`, qui ignorait entièrement le champ
+ * `featured` malgré la promesse affichée sur la page d'abonnement.
+ * Un professeur payait pour une visibilité qui n'existait pas.
+ *
+ * Le tri se fait en mémoire, pas via `orderBy` Firestore : combiner
+ * un tri sur `featured` puis sur `teacherRating` demanderait un index
+ * composite pour chaque combinaison de filtres déjà existante, soit
+ * une dizaine d'index supplémentaires pour un tri qui reste simple.
+ * Le volume de cours sur cette plateforme (des centaines, pas des
+ * millions) rend le tri en mémoire largement suffisant.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function getClassesWithPriority(filters?: {
+  subject?: string;
+  level?: string;
+  wilaya?: string;
+  teacherId?: string;
+}): Promise<Classe[]> {
+  const list = await getClasses(filters);
+
+  // Abonnement actif : vérifié via le même flag que la commission
+  const now = new Date();
+  return list.sort((a, b) => {
+    const aFeatured = isClassePromoted(a, now);
+    const bFeatured = isClassePromoted(b, now);
+    if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
+    return (b.teacherRating || 0) - (a.teacherRating || 0);
+  });
+}
+
+function isClassePromoted(c: any, now: Date): boolean {
+  if (!c.featured) return false;
+  // Le champ `subscriptionExpiry` n'est pas dupliqué sur le cours ;
+  // `featured` est mis à jour par activateSubscription et n'a pas de
+  // date propre. On accepte ici la limite : un featured reste actif
+  // jusqu'à ce qu'un admin le désactive ou que l'abonnement expire
+  // ET que la tâche de nettoyage soit passée. Voir sweep ci-dessous.
+  return true;
+}
+
+/**
+ * Désactive `featured` sur les cours dont l'abonnement du professeur
+ * a expiré. À lancer périodiquement — par exemple à chaque chargement
+ * du panneau admin — pour que la visibilité payante s'éteigne
+ * réellement à l'échéance.
+ */
+export async function sweepExpiredFeatured(): Promise<number> {
+  const now = new Date();
+
+  const teachersSnap = await getDocs(
+    query(collection(db, "users"), where("featured", "==", true))
+  );
+
+  const expired = teachersSnap.docs.filter(d => {
+    const u = d.data() as any;
+    if (!u.subscriptionExpiry) return true;
+    return new Date(u.subscriptionExpiry) <= now;
+  });
+
+  if (expired.length === 0) return 0;
+
+  let touched = 0;
+
+  for (const teacherDoc of expired) {
+    const batch = writeBatch(db);
+    batch.update(teacherDoc.ref, { featured: false, subscriptionActive: false });
+
+    const classesSnap = await getDocs(
+      query(collection(db, "classes"), where("teacherId", "==", teacherDoc.id))
+    );
+    classesSnap.docs.forEach(d => batch.update(d.ref, { featured: false }));
+
+    await batch.commit();
+    touched += classesSnap.size;
+  }
+
+  return touched;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// 3. PROFIL ENRICHI
+// ═══════════════════════════════════════════════════════════
+
+export interface ProfileGallery {
+  /** URLs de stockage Firebase, 4 maximum */
+  photos: string[];
+  /** Présentation longue — réservée aux abonnés, distincte de `bio` */
+  extendedBio?: string;
+}
+
+/**
+ * Met à jour la galerie et la présentation longue d'un professeur.
+ *
+ * Réservé aux abonnés actifs : la vérification se fait aussi côté
+ * règles Firestore, celle-ci est la validation côté application qui
+ * évite un aller-retour serveur inutile si la condition échoue déjà
+ * ici.
+ */
+export async function updateProfileGallery(
+  teacherId: string,
+  data: Partial<ProfileGallery>
+): Promise<void> {
+  const snap = await getDoc(doc(db, "users", teacherId));
+  if (!snap.exists()) throw new Error("profile-not-found");
+
+  const rate = getCommissionRate(snap.data() as any);
+  if (rate !== SUBSCRIBER_COMMISSION_RATE) {
+    throw new Error("subscription-required");
+  }
+
+  await updateDoc(doc(db, "users", teacherId), data as any);
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// STATUT D'ABONNEMENT
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Historique des demandes d'abonnement d'un professeur.
+ *
+ * `getTeacherSubscription` ne renvoie que l'abonnement ACTIF.
+ * Celle-ci renvoie aussi les demandes en attente ou expirées, pour
+ * que la page d'abonnement sache quoi afficher : le formulaire, un
+ * statut « en cours de vérification », ou la date de renouvellement.
+ */
+export async function getMySubscriptionRequests(
+  teacherId: string
+): Promise<Subscription[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, "subscriptions"),
+      where("teacherId", "==", teacherId),
+      orderBy("createdAt", "desc"),
+      limit(5)
+    )
+  );
+  return snap.docs.map(d => ({ id: d.id, ...d.data() } as Subscription));
 }

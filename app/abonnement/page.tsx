@@ -3,386 +3,451 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
-import { getTeacherSubscription, createSubscriptionRequest } from "@/lib/firestore";
-import { Subscription } from "@/lib/types";
 import {
-  Star, CheckCircle, Clock, Zap, Crown,
-  ArrowLeft, Copy, Check, ShieldCheck
+  createSubscriptionRequest, getMySubscriptionRequests,
+} from "@/lib/firestore";
+import { useToast } from "@/components/Toast";
+import { haptic } from "@/lib/haptics";
+import { Reveal, Sequence } from "@/components/Motion";
+import { PageLoader } from "@/components/Skeletons";
+import {
+  Crown, Copy, Check, Phone, MessageCircle, ArrowLeft,
+  Clock, CheckCircle2, XCircle, Loader2, Landmark, Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 
-const PLANS = [
-  {
-    id: "monthly",
-    labelFr: "Mensuel",
-    labelAr: "شهري",
-    price: 2000,
-    durationDays: 30,
-    descFr: "Idéal pour commencer",
-    descAr: "مثالي للبداية",
-    features: [
-      { fr: "Cours illimités", ar: "دروس غير محدودة" },
-      { fr: "Badge ⭐ Populaire", ar: "شارة ⭐ مميز" },
-      { fr: "Priorité dans les résultats", ar: "أولوية في نتائج البحث" },
-      { fr: "Statistiques détaillées", ar: "إحصاءات مفصلة" },
-    ],
-  },
-  {
-    id: "yearly",
-    labelFr: "Annuel",
-    labelAr: "سنوي",
-    price: 18000,
-    durationDays: 365,
-    descFr: "Économisez 25%",
-    descAr: "وفر 25%",
-    popular: true,
-    features: [
-      { fr: "Tout du plan mensuel", ar: "كل مزايا الخطة الشهرية" },
-      { fr: "Profil mis en avant", ar: "ملف شخصي مميز" },
-      { fr: "Support prioritaire", ar: "دعم ذو أولوية" },
-      { fr: "Badge ⭐ Annuel exclusif", ar: "شارة ⭐ سنوية حصرية" },
-    ],
-  },
-];
+/**
+ * Abonnement Professeur.
+ *
+ * ⚠️ Le paiement se fait hors plateforme, par virement CCP —
+ * comme tout le reste des transactions sur Ostadi. Le professeur
+ * transfère, indique sa référence de paiement, et l'admin valide
+ * manuellement dans /admin. Aucune carte bancaire n'est demandée
+ * ici : rien de sensible ne transite par ce formulaire.
+ */
 
-const PAYMENT_METHODS = [
-  { id: "baridimob", label: "BaridiMob", icon: "🏦", color: "bg-yellow-900/30 border-yellow-600/40" },
-  { id: "cib", label: "CIB", icon: "💳", color: "bg-blue-900/30 border-blue-600/40" },
-  { id: "cash", label: "Cash / Virement", icon: "💵", color: "bg-green-900/30 border-green-600/40" },
-];
+const PRICE = 2000;
 
-const BANK_INFO = {
-  baridimob: { number: "0023 4567 8901 2345", name: "Ostadi SRL" },
-  cib: { number: "0023 4567 8901 2345 6789", name: "Ostadi SRL" },
-  cash: { rib: "00799999000123456789", name: "Ostadi SRL" },
+/** Coordonnées de paiement — à ajuster si elles changent un jour */
+const PAYMENT = {
+  rip: "00799999002593548667",
+  primaryPhone: "0674202411",   // appel + WhatsApp
+  otherPhones: ["0798465842", "0558435083"], // appel uniquement
 };
 
+function waLink(phone: string, text: string): string {
+  const clean = "213" + phone.replace(/^0/, "");
+  return `https://wa.me/${clean}?text=${encodeURIComponent(text)}`;
+}
+
 export default function AbonnementPage() {
-  const { user, profile, loading, refreshProfile } = useAuth();
+  const { user, profile, loading } = useAuth();
   const { isRTL } = useLang();
   const router = useRouter();
+  const toast = useToast();
 
-  const [sub, setSub] = useState<Subscription | null>(null);
+  const [history, setHistory] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [selectedPlan, setSelectedPlan] = useState<"monthly" | "yearly">("monthly");
-  const [selectedMethod, setSelectedMethod] = useState<"baridimob" | "cib" | "cash">("baridimob");
-  const [paymentRef, setPaymentRef] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [method, setMethod] = useState<"baridimob" | "cib" | "cash">("baridimob");
+  const [ref, setRef] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!loading && (!user || profile?.role !== "teacher")) router.push("/auth");
-  }, [user, profile, loading]);
+    if (!loading && !user) router.push("/auth");
+  }, [loading, user, router]);
 
   useEffect(() => {
-    if (user) {
-      getTeacherSubscription(user.uid)
-        .then(setSub)
-        .finally(() => setLoadingData(false));
-    }
+    if (user) load();
   }, [user]);
 
-  function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+  async function load() {
+    setLoadingData(true);
+    try {
+      setHistory(await getMySubscriptionRequests(user!.uid));
+    } catch (err) {
+      console.error("Chargement de l'abonnement échoué :", err);
+    } finally {
+      setLoadingData(false);
+    }
+  }
+
+  function copyRip() {
+    navigator.clipboard.writeText(PAYMENT.rip);
+    haptic("success");
     setCopied(true);
+    toast.success(isRTL ? "تم النسخ" : "RIP copié");
     setTimeout(() => setCopied(false), 2000);
   }
 
-  async function handleSubmit() {
-    if (!paymentRef.trim()) return;
+  async function submit() {
+    if (!user || !profile || ref.trim().length < 3) return;
     setSubmitting(true);
-    const plan = PLANS.find(p => p.id === selectedPlan)!;
-    const startDate = new Date().toISOString();
-    const endDate = new Date(Date.now() + plan.durationDays * 86400000).toISOString();
+    haptic("tap");
     try {
+      const now = new Date();
+      const end = new Date(now);
+      end.setMonth(end.getMonth() + 1);
+
       await createSubscriptionRequest({
-        teacherId: user!.uid,
-        teacherName: profile!.displayName,
-        plan: selectedPlan,
-        amount: plan.price,
+        teacherId: user.uid,
+        teacherName: profile.displayName,
+        plan: "monthly",
+        amount: PRICE,
         status: "pending",
-        startDate,
-        endDate,
-        paymentMethod: selectedMethod,
-        paymentRef: paymentRef.trim(),
-        createdAt: new Date().toISOString(),
+        startDate: now.toISOString(),
+        endDate: end.toISOString(),
+        paymentMethod: method,
+        paymentRef: ref.trim(),
+        createdAt: now.toISOString(),
       });
-      setSubmitted(true);
+
+      haptic("success");
+      toast.success(isRTL ? "تم إرسال طلبك" : "Demande envoyée");
+      setRef("");
+      await load();
+    } catch (err) {
+      console.error("Envoi de la demande échoué :", err);
+      toast.error(isRTL ? "فشل الإرسال" : "Échec de l'envoi");
     } finally {
       setSubmitting(false);
     }
   }
 
-  function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString(isRTL ? "ar-DZ" : "fr-DZ", {
-      day: "2-digit", month: "long", year: "numeric",
-    });
+  if (loading || loadingData) {
+    return <PageLoader label={isRTL ? "جارٍ التحميل..." : "Chargement..."} />;
   }
 
-  if (loading || loadingData) return (
-    <div className="flex items-center justify-center min-h-screen text-purple-400 grid-bg">
-      {isRTL ? "جارٍ التحميل..." : "Chargement..."}
-    </div>
-  );
+  const active = history.find(s => s.status === "active" && new Date(s.endDate) > new Date());
+  const pending = history.find(s => s.status === "pending");
 
-  // Active subscription view
-  if (sub && sub.status === "active") {
-    return (
-      <div className="grid-bg min-h-screen flex items-center justify-center px-4" dir={isRTL ? "rtl" : "ltr"}>
-        <div className="card max-w-md w-full text-center py-10 border border-[#FF8C00]/30 neon-orange">
-          <Crown className="w-14 h-14 text-[#FF8C00] mx-auto mb-4" />
-          <h2 className="text-2xl font-black text-white mb-2">
-            {isRTL ? "أنت مشترك مميز 👑" : "Abonnement Actif 👑"}
-          </h2>
-          <div className="badge-orange mx-auto mb-4 w-fit">
-            {sub.plan === "monthly"
-              ? isRTL ? "خطة شهرية" : "Plan Mensuel"
-              : isRTL ? "خطة سنوية" : "Plan Annuel"}
-          </div>
-          <p className="text-purple-400 text-sm mb-6">
-            {isRTL ? "ينتهي في:" : "Expire le:"}{" "}
-            <span className="text-white font-semibold">{formatDate(sub.endDate)}</span>
-          </p>
-          <div className="flex flex-col gap-2 text-sm text-purple-300 mb-6">
-            {[
-              { fr: "✅ Cours illimités", ar: "✅ دروس غير محدودة" },
-              { fr: "✅ Badge Populaire actif", ar: "✅ شارة مميز نشطة" },
-              { fr: "✅ Priorité dans les résultats", ar: "✅ أولوية في البحث" },
-            ].map(f => (
-              <div key={f.fr}>{isRTL ? f.ar : f.fr}</div>
-            ))}
-          </div>
-          <Link href="/dashboard" className="btn-primary inline-block">
-            {isRTL ? "العودة للوحة التحكم" : "Retour au dashboard"}
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  // Submitted pending view
-  if (submitted) {
-    return (
-      <div className="grid-bg min-h-screen flex items-center justify-center px-4" dir={isRTL ? "rtl" : "ltr"}>
-        <div className="card max-w-md w-full text-center py-10 border border-amber-500/30 bg-amber-900/10">
-          <Clock className="w-14 h-14 text-amber-400 mx-auto mb-4" />
-          <h2 className="text-xl font-black text-white mb-2">
-            {isRTL ? "طلبك قيد المراجعة ⏳" : "Demande en cours d'examen ⏳"}
-          </h2>
-          <p className="text-purple-400 text-sm mb-6">
-            {isRTL
-              ? "سنراجع دفعتك ونفعّل اشتراكك خلال 24 ساعة."
-              : "Nous vérifierons votre paiement et activerons votre abonnement sous 24h."}
-          </p>
-          <Link href="/dashboard" className="btn-primary inline-block">
-            {isRTL ? "العودة للوحة التحكم" : "Retour au dashboard"}
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const bankInfo = BANK_INFO[selectedMethod];
-  const plan = PLANS.find(p => p.id === selectedPlan)!;
+  const DA = isRTL ? "دج" : "DA";
 
   return (
-    <div className="grid-bg min-h-screen" dir={isRTL ? "rtl" : "ltr"}>
-      <div className="fixed top-0 left-1/3 w-96 h-96 bg-purple-700/15 rounded-full blur-3xl pointer-events-none" />
-      <div className="fixed top-0 right-1/3 w-64 h-64 bg-orange-600/10 rounded-full blur-3xl pointer-events-none" />
+    <div style={{ minHeight: "100vh" }} dir={isRTL ? "rtl" : "ltr"}>
+      <div style={{ maxWidth: 620, margin: "0 auto", padding: "26px 16px 60px" }}>
 
-      <div className="relative max-w-3xl mx-auto px-4 py-10">
-        <Link href="/dashboard" className={`inline-flex items-center gap-2 text-sm text-purple-400 hover:text-purple-200 mb-8 transition-colors ${isRTL ? "flex-row-reverse" : ""}`}>
-          <ArrowLeft className={`w-4 h-4 ${isRTL ? "rotate-180" : ""}`} />
+        <Link href="/dashboard" style={back}>
+          <ArrowLeft size={15} className="os-flip" />
           {isRTL ? "رجوع" : "Retour"}
         </Link>
 
-        {/* Header */}
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-orange-900/30 border border-[#FF8C00]/40 neon-orange mb-4">
-            <Crown className="w-8 h-8 text-[#FF8C00]" />
+        <Sequence>
+          <div style={{ textAlign: "center", marginBottom: 26 }}>
+            <span style={{
+              width: 62, height: 62, borderRadius: 20, margin: "0 auto 16px",
+              background: "linear-gradient(140deg, rgba(255,140,0,0.24), rgba(124,58,237,0.2))",
+              border: "1px solid rgba(255,140,0,0.3)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#FF8C00",
+            }}>
+              <Crown size={28} />
+            </span>
+            <h1 className="os-display os-h2" style={{ margin: "0 0 8px" }}>
+              {isRTL ? "أستاذ مميز" : "Professeur Premium"}
+            </h1>
+            <p style={{ color: "#FF8C00", fontWeight: 800, fontSize: 22 }}>
+              {PRICE.toLocaleString("fr-DZ")} {DA}
+              <span style={{ color: "#8b7bb8", fontSize: 13, fontWeight: 500 }}>
+                {" "}/{isRTL ? "شهر" : "mois"}
+              </span>
+            </p>
           </div>
-          <h1 className="text-3xl font-black text-white mb-2">
-            {isRTL ? "اشترك في الخطة المميزة" : "Passez en Professeur Premium"}
-          </h1>
-          <p className="text-purple-400">
-            {isRTL
-              ? "اظهر في أعلى القائمة وأنشئ دروساً غير محدودة"
-              : "Apparaissez en tête de liste et créez des cours illimités"}
-          </p>
-        </div>
+        </Sequence>
 
-        {/* Plans */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-          {PLANS.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setSelectedPlan(p.id as "monthly" | "yearly")}
-              className={`card text-${isRTL ? "right" : "left"} transition-all border-2 relative ${
-                selectedPlan === p.id
-                  ? "border-[#FF8C00] neon-orange"
-                  : "border-purple-800/40 hover:border-purple-600/60"
-              }`}
-            >
-              {p.popular && (
-                <div className={`absolute -top-3 ${isRTL ? "left-4" : "right-4"}`}>
-                  <span className="badge-orange text-xs font-bold px-3 py-1">
-                    {isRTL ? "🔥 الأفضل" : "🔥 Meilleur choix"}
-                  </span>
+        {/* ═══ ÉTAT ACTUEL ═══ */}
+        {active && (
+          <Reveal>
+            <div className="os-glass-2" style={{
+              padding: 18, marginBottom: 20,
+              borderColor: "rgba(34,197,94,0.32)",
+              display: "flex", alignItems: "center", gap: 13,
+            }}>
+              <span style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                background: "rgba(34,197,94,0.15)", color: "#4ade80",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <CheckCircle2 size={19} />
+              </span>
+              <div>
+                <div style={{ color: "#4ade80", fontWeight: 750, fontSize: 14 }}>
+                  {isRTL ? "اشتراكك نشط" : "Votre abonnement est actif"}
                 </div>
-              )}
-              <div className={`flex items-start justify-between mb-4 ${isRTL ? "flex-row-reverse" : ""}`}>
-                <div className={isRTL ? "text-right" : ""}>
-                  <div className="text-white font-black text-lg">
-                    {isRTL ? p.labelAr : p.labelFr}
-                  </div>
-                  <div className="text-purple-400 text-xs mt-0.5">
-                    {isRTL ? p.descAr : p.descFr}
-                  </div>
+                <div style={{ color: "#8b7bb8", fontSize: 12, marginTop: 2 }}>
+                  {isRTL ? "ينتهي في " : "Se termine le "}
+                  {new Date(active.endDate).toLocaleDateString(isRTL ? "ar-DZ" : "fr-DZ", {
+                    day: "2-digit", month: "long", year: "numeric",
+                  })}
                 </div>
-                <div className={isRTL ? "text-left" : "text-right"}>
-                  <div className="text-2xl font-black text-[#FF8C00]">
-                    {p.price.toLocaleString()} DA
-                  </div>
-                  <div className="text-purple-500 text-xs">
-                    / {isRTL ? (p.id === "monthly" ? "شهر" : "سنة") : (p.id === "monthly" ? "mois" : "an")}
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-col gap-2">
-                {p.features.map(f => (
-                  <div key={f.fr} className={`flex items-center gap-2 text-sm text-purple-300 ${isRTL ? "flex-row-reverse" : ""}`}>
-                    <CheckCircle className="w-4 h-4 text-[#FF8C00] shrink-0" />
-                    {isRTL ? f.ar : f.fr}
-                  </div>
-                ))}
-              </div>
-              {selectedPlan === p.id && (
-                <div className={`absolute top-3 ${isRTL ? "right-3" : "left-3"} w-5 h-5 rounded-full bg-[#FF8C00] flex items-center justify-center`}>
-                  <Check className="w-3 h-3 text-white" />
-                </div>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Payment Method */}
-        <div className="card mb-6">
-          <h2 className={`font-bold text-white mb-4 ${isRTL ? "text-right" : ""}`}>
-            {isRTL ? "طريقة الدفع" : "Méthode de paiement"}
-          </h2>
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            {PAYMENT_METHODS.map(m => (
-              <button
-                key={m.id}
-                onClick={() => setSelectedMethod(m.id as any)}
-                className={`p-3 rounded-xl border-2 text-center transition-all ${
-                  selectedMethod === m.id
-                    ? `${m.color} border-opacity-100`
-                    : "border-purple-800/40 hover:border-purple-600/40"
-                }`}
-              >
-                <div className="text-2xl mb-1">{m.icon}</div>
-                <div className="text-xs font-semibold text-white">{m.label}</div>
-              </button>
-            ))}
-          </div>
-
-          {/* Bank details */}
-          <div className={`bg-[#0D0118] border border-purple-900/40 rounded-xl p-4 ${isRTL ? "text-right" : ""}`}>
-            <h3 className="text-sm font-bold text-purple-300 mb-3">
-              {isRTL ? "تفاصيل الدفع" : "Coordonnées de paiement"}
-            </h3>
-            <div className="flex flex-col gap-2">
-              <div className={`flex items-center justify-between ${isRTL ? "flex-row-reverse" : ""}`}>
-                <span className="text-purple-400 text-xs">
-                  {selectedMethod === "cash"
-                    ? isRTL ? "رقم الحساب (RIB)" : "Numéro de compte (RIB)"
-                    : isRTL ? "رقم الحساب" : "Numéro de compte"}
-                </span>
-                <div className={`flex items-center gap-2 ${isRTL ? "flex-row-reverse" : ""}`}>
-                  <span className="text-white font-mono text-sm">
-                   {selectedMethod === "cash"
-                      ? (bankInfo as any).rib
-                       : (bankInfo as any).number}
-                  </span>
-                  <button
-                    onClick={() =>copyToClipboard(
-                                                  selectedMethod === "cash"
-                                                   ? (bankInfo as any).rib
-                                                  : (bankInfo as any).number
-                                                 )}                        
-                    className="text-purple-400 hover:text-[#FF8C00] transition-colors"
-                  >
-                    {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              <div className={`flex items-center justify-between ${isRTL ? "flex-row-reverse" : ""}`}>
-                <span className="text-purple-400 text-xs">{isRTL ? "الاسم" : "Nom"}</span>
-                <span className="text-white text-sm font-semibold">{bankInfo.name}</span>
-              </div>
-              <div className={`flex items-center justify-between ${isRTL ? "flex-row-reverse" : ""}`}>
-                <span className="text-purple-400 text-xs">{isRTL ? "المبلغ" : "Montant"}</span>
-                <span className="text-[#FF8C00] font-bold">{plan.price.toLocaleString()} DA</span>
               </div>
             </div>
+          </Reveal>
+        )}
 
-            <div className="mt-4 p-3 bg-amber-900/20 border border-amber-700/30 rounded-xl">
-              <p className="text-amber-300 text-xs">
+        {pending && !active && (
+          <Reveal>
+            <div className="os-glass-2" style={{
+              padding: 18, marginBottom: 20,
+              borderColor: "rgba(251,191,36,0.3)",
+              display: "flex", alignItems: "center", gap: 13,
+            }}>
+              <span style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                background: "rgba(251,191,36,0.14)", color: "#fbbf24",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Clock size={19} />
+              </span>
+              <div>
+                <div style={{ color: "#fbbf24", fontWeight: 750, fontSize: 14 }}>
+                  {isRTL ? "طلبك قيد المراجعة" : "Demande en cours de vérification"}
+                </div>
+                <div style={{ color: "#8b7bb8", fontSize: 12, marginTop: 2 }}>
+                  {isRTL
+                    ? "سنؤكّد الدفع خلال 24 ساعة."
+                    : "Nous confirmons le paiement sous 24 heures."}
+                </div>
+              </div>
+            </div>
+          </Reveal>
+        )}
+
+        {/* ═══ AVANTAGES ═══ */}
+        <Reveal>
+          <div className="os-glass-2" style={{ padding: 20, marginBottom: 20 }}>
+            <h2 style={sectionTitle}>
+              <Sparkles size={16} style={{ color: "#FF8C00" }} />
+              {isRTL ? "المزايا" : "Avantages"}
+            </h2>
+            <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+              {[
+                {
+                  fr: "Commission réduite à 5 % au lieu de 10 %",
+                  ar: "عمولة مخفّضة إلى 5٪ بدل 10٪",
+                  strong: true,
+                },
+                {
+                  fr: "Priorité dans les résultats, à note égale",
+                  ar: "أولوية في النتائج، عند تساوي التقييم",
+                },
+                {
+                  fr: "Badge Premium sur votre profil et vos cours",
+                  ar: "شارة مميّزة على ملفك ودروسك",
+                },
+                {
+                  fr: "Galerie photo et présentation détaillée",
+                  ar: "معرض صور وتقديم مفصّل",
+                },
+              ].map((b, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <Check size={15} style={{ color: "#4ade80", flexShrink: 0, marginTop: 2 }} />
+                  <span style={{
+                    color: (b as any).strong ? "#fdba74" : "#c4b5fd",
+                    fontSize: 13.5, lineHeight: 1.6,
+                    fontWeight: (b as any).strong ? 700 : 400,
+                  }}>
+                    {isRTL ? b.ar : b.fr}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Le calcul qui décide — un professeur peut le vérifier
+                lui-même, ce qui vaut mieux que n'importe quel argument */}
+            <div style={{
+              background: "rgba(34,197,94,0.07)",
+              border: "1px solid rgba(34,197,94,0.24)",
+              borderRadius: 12, padding: "13px 15px", marginTop: 16,
+            }}>
+              <p style={{ color: "#6ee7b7", fontSize: 12.5, margin: 0, lineHeight: 1.75 }}>
                 {isRTL
-                  ? "⚠️ قم بالدفع ثم أدخل مرجع الدفع أدناه. سيتم تفعيل اشتراكك خلال 24 ساعة."
-                  : "⚠️ Effectuez le paiement puis entrez la référence ci-dessous. Votre abonnement sera activé sous 24h."}
+                  ? "ابتداءً من 40 000 دج من رقم الأعمال الشهري، الفرق في العمولة يغطّي ثمن الاشتراك بالكامل. ما بعد ذلك، الاشتراك يربحك مالاً."
+                  : "À partir de 40 000 DA de chiffre d'affaires mensuel, la différence de commission couvre entièrement le prix de l'abonnement. Au-delà, il vous rapporte."}
               </p>
             </div>
           </div>
-        </div>
+        </Reveal>
 
-        {/* Payment reference */}
-        <div className="card mb-6">
-          <h2 className={`font-bold text-white mb-3 ${isRTL ? "text-right" : ""}`}>
-            {isRTL ? "مرجع الدفع" : "Référence de paiement"}
-          </h2>
-          <p className="text-purple-400 text-xs mb-3">
-            {isRTL
-              ? "أدخل رقم المعاملة أو مرجع التحويل الذي حصلت عليه بعد الدفع"
-              : "Entrez le numéro de transaction ou la référence du virement reçue après paiement"}
-          </p>
-          <input
-            className={`input-field ${isRTL ? "text-right" : ""}`}
-            placeholder={isRTL ? "مثال: TXN-12345678" : "Ex: TXN-12345678"}
-            value={paymentRef}
-            onChange={e => setPaymentRef(e.target.value)}
-          />
-        </div>
+        {/* ═══ PAIEMENT ═══ */}
+        {!active && (
+          <Reveal>
+            <div className="os-glass-2" style={{ padding: 20, marginBottom: 20 }}>
+              <h2 style={sectionTitle}>
+                <Landmark size={16} style={{ color: "#FF8C00" }} />
+                {isRTL ? "الدفع" : "Paiement"}
+              </h2>
 
-        {/* Submit */}
-        <button
-          onClick={handleSubmit}
-          disabled={submitting || !paymentRef.trim()}
-          className="btn-primary w-full py-4 text-base font-bold flex items-center justify-center gap-2 neon-orange disabled:opacity-40"
-        >
-          {submitting ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              {isRTL ? "جارٍ الإرسال..." : "Envoi en cours..."}
-            </>
-          ) : (
-            <>
-              <Zap className="w-5 h-5" />
-              {isRTL
-                ? `تأكيد الدفع وتفعيل الاشتراك — ${plan.price.toLocaleString()} DA`
-                : `Confirmer le paiement — ${plan.price.toLocaleString()} DA`}
-            </>
-          )}
-        </button>
+              <p style={{ color: "#8b7bb8", fontSize: 13, margin: "-6px 0 16px", lineHeight: 1.7 }}>
+                {isRTL
+                  ? `حوّل ${PRICE} دج إلى الحساب البريدي (CCP) أدناه، ثمّ أدخل رقم العملية في الاستمارة.`
+                  : `Effectuez un virement de ${PRICE} DA vers le compte CCP ci-dessous, puis indiquez votre référence de paiement dans le formulaire.`}
+              </p>
 
-        <p className="text-xs text-purple-600 text-center mt-3">
-          {isRTL
-            ? "بتأكيد الدفع، توافق على شروط استخدام منصة أستاذي"
-            : "En confirmant, vous acceptez les conditions d'utilisation d'Ostadi"}
-        </p>
+              {/* RIP */}
+              <div style={{
+                background: "linear-gradient(140deg, rgba(255,140,0,0.09), rgba(124,58,237,0.07))",
+                border: "2px dashed rgba(255,140,0,0.38)",
+                borderRadius: 16, padding: "16px 18px", marginBottom: 16,
+              }}>
+                <p style={{
+                  color: "#a78bfa", fontSize: 10.5, fontWeight: 700,
+                  textTransform: "uppercase", letterSpacing: "0.8px", margin: "0 0 8px",
+                }}>
+                  {isRTL ? "الحساب البريدي (RIP)" : "Compte CCP (RIP)"}
+                </p>
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: 10, flexWrap: "wrap",
+                }}>
+                  <span style={{
+                    color: "#FF8C00", fontWeight: 800, fontSize: 17,
+                    letterSpacing: "1px", fontFamily: "monospace", wordBreak: "break-all",
+                  }}>
+                    {PAYMENT.rip}
+                  </span>
+                  <button onClick={copyRip} style={{
+                    display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
+                    background: copied ? "rgba(34,197,94,0.16)" : "rgba(255,140,0,0.14)",
+                    color: copied ? "#4ade80" : "#FF8C00",
+                    border: `1px solid ${copied ? "rgba(34,197,94,0.3)" : "rgba(255,140,0,0.3)"}`,
+                    fontSize: 12, fontWeight: 700, padding: "8px 14px",
+                    borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                  }}>
+                    {copied ? <Check size={13} /> : <Copy size={13} />}
+                    {copied ? (isRTL ? "تم" : "Copié") : (isRTL ? "نسخ" : "Copier")}
+                  </button>
+                </div>
+              </div>
+
+              {/* Contact */}
+              <p style={{
+                color: "#a78bfa", fontSize: 10.5, fontWeight: 700,
+                textTransform: "uppercase", letterSpacing: "0.8px", margin: "0 0 10px",
+              }}>
+                {isRTL ? "للتأكيد أو الاستفسار" : "Pour confirmer ou toute question"}
+              </p>
+
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                <a href={`tel:${PAYMENT.primaryPhone}`} className="os-btn-ghost" style={contactBtn}>
+                  <Phone size={14} /> {PAYMENT.primaryPhone}
+                </a>
+                <a
+                  href={waLink(PAYMENT.primaryPhone, isRTL
+                    ? "مرحباً، بخصوص اشتراك أستاذي المميز."
+                    : "Bonjour, au sujet de l'abonnement Ostadi Premium.")}
+                  target="_blank" rel="noopener noreferrer"
+                  style={{ ...contactBtn, background: "rgba(34,197,94,0.14)", color: "#4ade80", border: "1px solid rgba(34,197,94,0.3)", textDecoration: "none" }}
+                >
+                  <MessageCircle size={14} /> WhatsApp
+                </a>
+              </div>
+
+              <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                {PAYMENT.otherPhones.map(p => (
+                  <a key={p} href={`tel:${p}`} style={{
+                    display: "inline-flex", alignItems: "center", gap: 5,
+                    color: "#6d28d9", fontSize: 12, textDecoration: "none",
+                  }}>
+                    <Phone size={11} /> {p}
+                  </a>
+                ))}
+              </div>
+            </div>
+          </Reveal>
+        )}
+
+        {/* ═══ FORMULAIRE ═══ */}
+        {!active && !pending && (
+          <Reveal>
+            <div className="os-glass-2" style={{ padding: 20 }}>
+              <h2 style={sectionTitle}>
+                {isRTL ? "تأكيد الدفع" : "Confirmer le paiement"}
+              </h2>
+
+              <label style={label}>{isRTL ? "طريقة الدفع" : "Méthode de paiement"}</label>
+              <div style={{ display: "flex", gap: 7, marginBottom: 16, flexWrap: "wrap" }}>
+                {[
+                  { id: "baridimob", fr: "BaridiMob", ar: "بريدي موب" },
+                  { id: "cib", fr: "CIB", ar: "CIB" },
+                  { id: "cash", fr: "En main", ar: "نقداً" },
+                ].map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => { haptic("select"); setMethod(m.id as any); }}
+                    style={{
+                      background: method === m.id ? "rgba(255,140,0,0.16)" : "rgba(20,8,45,0.5)",
+                      border: `1px solid ${method === m.id ? "rgba(255,140,0,0.4)" : "rgba(124,58,237,0.18)"}`,
+                      color: method === m.id ? "#FF8C00" : "#8b7bb8",
+                      fontSize: 12.5, fontWeight: 700, padding: "9px 15px",
+                      borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                    }}
+                  >
+                    {isRTL ? m.ar : m.fr}
+                  </button>
+                ))}
+              </div>
+
+              <label style={label}>
+                {isRTL ? "رقم العملية أو الوصل" : "Référence ou numéro de reçu"}
+              </label>
+              <input
+                value={ref}
+                onChange={e => setRef(e.target.value)}
+                placeholder={isRTL ? "مثال : رقم العملية من بريدي موب" : "Ex : numéro de transaction BaridiMob"}
+                className="os-input"
+                style={{ marginBottom: 18 }}
+              />
+
+              <button
+                onClick={submit}
+                disabled={ref.trim().length < 3 || submitting}
+                className="os-btn-chalk"
+                style={{
+                  width: "100%", padding: 14, fontSize: 14.5,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                  opacity: ref.trim().length < 3 || submitting ? 0.45 : 1,
+                }}
+              >
+                {submitting
+                  ? <><Loader2 size={16} style={{ animation: "abspin 0.8s linear infinite" }} /> {isRTL ? "جارٍ الإرسال..." : "Envoi..."}</>
+                  : (isRTL ? "إرسال الطلب" : "Envoyer la demande")}
+              </button>
+
+              <p style={{ color: "#4c1d95", fontSize: 10.5, margin: "12px 0 0", textAlign: "center", lineHeight: 1.6 }}>
+                {isRTL
+                  ? "تحقّق من الدفع يدوياً — يستغرق حتى 24 ساعة."
+                  : "Vérification manuelle du paiement — jusqu'à 24 heures."}
+              </p>
+            </div>
+          </Reveal>
+        )}
       </div>
+
+      <style>{`@keyframes abspin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
+
+const back: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 7,
+  color: "#a78bfa", textDecoration: "none", fontSize: 13,
+  fontWeight: 600, marginBottom: 22,
+};
+
+const sectionTitle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 9,
+  color: "white", fontWeight: 750, fontSize: 15, margin: "0 0 16px",
+};
+
+const label: React.CSSProperties = {
+  display: "block", color: "#a78bfa", fontSize: 11.5, fontWeight: 700,
+  textTransform: "uppercase", letterSpacing: "0.4px", marginBottom: 8,
+};
+
+const contactBtn: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 7,
+  fontSize: 13, fontWeight: 700, padding: "10px 16px",
+  borderRadius: 11, cursor: "pointer", fontFamily: "inherit",
+  textDecoration: "none",
+};
