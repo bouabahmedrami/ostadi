@@ -227,18 +227,36 @@ service cloud.firestore {
     // déterministe (uid1__uid2), donc devinable : la règle est la
     // seule barrière, elle doit être stricte.
     match /threads/{threadId} {
+      /**
+       * ⚠️ `resource == null` est indispensable.
+       *
+       * Avant d'ouvrir une conversation, le code lit le document pour
+       * savoir s'il existe déjà. Sur un document INEXISTANT, `resource`
+       * vaut null — et `resource.data.participants` fait alors échouer
+       * l'évaluation, donc refuse la lecture.
+       *
+       * Résultat : impossible de créer une première conversation. La
+       * lecture de vérification échouait avant même d'arriver à la
+       * création, et l'erreur remontait comme un refus générique.
+       */
       allow read: if isAdmin()
+        || (isAuth() && resource == null)
         || (isAuth() && request.auth.uid in resource.data.participants);
+
       allow create: if isAuth()
-        && request.auth.uid in request.resource.data.participants;
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2;
+
       allow update: if isAuth()
         && request.auth.uid in resource.data.participants;
+
       allow delete: if isAdmin();
     }
 
     match /privateMessages/{messageId} {
       allow read: if isAdmin()
-        || (isAuth() && request.auth.uid in resource.data.participants);
+        || (isAuth() && resource != null
+            && request.auth.uid in resource.data.participants);
       allow create: if isAuth()
         && request.auth.uid == request.resource.data.senderId
         && request.auth.uid in request.resource.data.participants;

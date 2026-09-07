@@ -4511,9 +4511,24 @@ export async function openPrivateThread(data: {
 
   const id = threadIdFor(data.meId, data.otherId);
   const ref = doc(db, "threads", id);
-  const existing = await getDoc(ref);
 
-  if (existing.exists()) return id;
+  /**
+   * ⚠️ La lecture préalable est enveloppée.
+   *
+   * Elle sert seulement à éviter de réécrire une conversation
+   * existante. Si elle échoue — règle trop stricte, document absent,
+   * réseau — ce n'est pas une raison d'abandonner : on poursuit, et
+   * `setDoc` avec `merge` se chargera de ne rien écraser.
+   *
+   * Faire dépendre la création d'une lecture qui peut échouer, c'est
+   * ajouter un point de rupture là où il n'y en avait pas besoin.
+   */
+  try {
+    const existing = await getDoc(ref);
+    if (existing.exists()) return id;
+  } catch (err) {
+    console.warn("Vérification d'existence ignorée :", err);
+  }
 
   // Vérification du lien : qui est l'élève, qui est le professeur ?
   const studentId = data.meRole === "student" ? data.meId : data.otherId;
@@ -4533,6 +4548,9 @@ export async function openPrivateThread(data: {
 
   const now = new Date().toISOString();
 
+  // `merge` protège une conversation déjà commencée : si la lecture
+  // ci-dessus a échoué alors que le fil existait, on n'efface ni les
+  // messages ni les compteurs
   await setDoc(ref, {
     participants: [data.meId, data.otherId].sort(),
     names: { [data.meId]: data.meName, [data.otherId]: data.otherName },
@@ -4542,7 +4560,7 @@ export async function openPrivateThread(data: {
     lastSenderId: "",
     unread: { [data.meId]: 0, [data.otherId]: 0 },
     createdAt: now,
-  });
+  }, { merge: true });
 
   return id;
 }
