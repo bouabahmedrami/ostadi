@@ -1,7 +1,7 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc,
   query, where, orderBy, setDoc, deleteDoc, writeBatch, limit,
-  increment, documentId,
+  increment, documentId, onSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import { parseSessionDate, CLOSE_AFTER_MIN } from "./course-access";
@@ -425,7 +425,7 @@ export async function getPlatformStats() {
 
 // ─── Chat / Messages ─────────────────────────────────────────────────
 import { Message } from "./types";
-import { onSnapshot } from "firebase/firestore";
+// onSnapshot est déjà importé en tête de fichier
 
 export async function getUserChatRooms(userId: string, role: string): Promise<any[]> {
   let enrolledClasseIds: string[] = [];
@@ -4430,4 +4430,341 @@ export async function getMySubscriptionRequests(
     )
   );
   return snap.docs.map(d => ({ id: d.id, ...d.data() } as Subscription));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// MESSAGERIE PRIVÉE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Conversation privée entre deux personnes.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Distincte du chat de cours, qui est collectif : tous les inscrits
+ * y lisent tout. Un élève qui n'a pas compris un point, ou qui doit
+ * signaler une absence, ne veut pas écrire devant vingt camarades.
+ *
+ * Aujourd'hui ces échanges passent par WhatsApp — hors de la
+ * plateforme, donc invisibles en cas de litige, et sans possibilité
+ * de modération. Sur un service où des adultes échangent avec des
+ * mineurs, c'est exactement ce qu'il ne faut pas.
+ * ═══════════════════════════════════════════════════════════
+ */
+
+export interface PrivateThread {
+  id: string;
+  /** Toujours [uid1, uid2] triés — garantit un identifiant stable */
+  participants: string[];
+  /** Noms indexés par uid, pour afficher sans lire les profils */
+  names: Record<string, string>;
+  /** Rôles indexés par uid */
+  roles: Record<string, string>;
+  lastMessage: string;
+  lastMessageAt: string;
+  lastSenderId: string;
+  /** Nombre de messages non lus, par destinataire */
+  unread: Record<string, number>;
+  createdAt: string;
+}
+
+export interface PrivateMessage {
+  id: string;
+  threadId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  participants: string[];
+  read: boolean;
+  createdAt: string;
+}
+
+/**
+ * Identifiant de conversation, déterministe.
+ *
+ * Les deux identifiants triés puis joints : deux personnes obtiennent
+ * toujours le même fil, quel que soit celui qui écrit en premier.
+ * Sans ça, deux conversations parallèles se créeraient et chacun
+ * verrait la moitié des messages.
+ */
+export function threadIdFor(a: string, b: string): string {
+  return [a, b].sort().join("__");
+}
+
+/**
+ * Ouvre ou récupère une conversation privée.
+ *
+ * ⚠️ Une relation doit exister entre les deux : l'élève est inscrit
+ * à un cours du professeur, ou a une demande en cours. Sans cette
+ * vérification, n'importe qui pourrait écrire à n'importe quel
+ * professeur — la porte ouverte au démarchage et au harcèlement.
+ */
+export async function openPrivateThread(data: {
+  meId: string;
+  meName: string;
+  meRole: string;
+  otherId: string;
+  otherName: string;
+  otherRole: string;
+}): Promise<string> {
+  if (data.meId === data.otherId) throw new Error("self-thread");
+
+  const id = threadIdFor(data.meId, data.otherId);
+  const ref = doc(db, "threads", id);
+  const existing = await getDoc(ref);
+
+  if (existing.exists()) return id;
+
+  // Vérification du lien : qui est l'élève, qui est le professeur ?
+  const studentId = data.meRole === "student" ? data.meId : data.otherId;
+  const teacherId = data.meRole === "student" ? data.otherId : data.meId;
+
+  const allowed = await hasRelation(studentId, teacherId);
+  if (!allowed) throw new Error("no-relation");
+
+  const now = new Date().toISOString();
+
+  await setDoc(ref, {
+    participants: [data.meId, data.otherId].sort(),
+    names: { [data.meId]: data.meName, [data.otherId]: data.otherName },
+    roles: { [data.meId]: data.meRole, [data.otherId]: data.otherRole },
+    lastMessage: "",
+    lastMessageAt: now,
+    lastSenderId: "",
+    unread: { [data.meId]: 0, [data.otherId]: 0 },
+    createdAt: now,
+  });
+
+  return id;
+}
+
+/**
+ * L'élève et le professeur ont-ils un lien ?
+ *
+ * Une inscription suffit, ou une demande — même refusée : un élève
+ * doit pouvoir demander pourquoi sa demande n'a pas abouti.
+ */
+export async function hasRelation(
+  studentId: string,
+  teacherId: string
+): Promise<boolean> {
+  // Cours du professeur
+  const classesSnap = await getDocs(
+    query(collection(db, "classes"), where("teacherId", "==", teacherId))
+  );
+  if (classesSnap.empty) return false;
+
+  const classeIds = new Set(classesSnap.docs.map(d => d.id));
+
+  // Inscription
+  const enrollSnap = await getDocs(
+    query(collection(db, "enrollments"), where("studentId", "==", studentId))
+  );
+  if (enrollSnap.docs.some(d => classeIds.has((d.data() as any).classeId))) {
+    return true;
+  }
+
+  // Demande d'inscription
+  const reqSnap = await getDocs(
+    query(
+      collection(db, "enrollmentRequests"),
+      where("studentId", "==", studentId),
+      where("teacherId", "==", teacherId),
+      limit(1)
+    )
+  );
+  return !reqSnap.empty;
+}
+
+/** Envoie un message privé */
+export async function sendPrivateMessage(data: {
+  threadId: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+}): Promise<void> {
+  const threadRef = doc(db, "threads", data.threadId);
+  const threadSnap = await getDoc(threadRef);
+  if (!threadSnap.exists()) throw new Error("thread-not-found");
+
+  const t = threadSnap.data() as any;
+  const participants: string[] = t.participants || [];
+
+  if (!participants.includes(data.senderId)) throw new Error("not-a-participant");
+
+  const other = participants.find(p => p !== data.senderId)!;
+  const now = new Date().toISOString();
+  const text = data.text.trim().slice(0, 1000);
+  if (!text) return;
+
+  await addDoc(collection(db, "privateMessages"), {
+    threadId: data.threadId,
+    senderId: data.senderId,
+    senderName: data.senderName,
+    text,
+    participants,
+    read: false,
+    createdAt: now,
+  });
+
+  // Aperçu et compteur du destinataire
+  await updateDoc(threadRef, {
+    lastMessage: text.slice(0, 120),
+    lastMessageAt: now,
+    lastSenderId: data.senderId,
+    [`unread.${other}`]: increment(1),
+  });
+
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: other,
+      type: "message",
+      title: `💬 ${data.senderName}`,
+      titleAr: `💬 ${data.senderName}`,
+      body: text.slice(0, 90),
+      bodyAr: text.slice(0, 90),
+      link: `/messages/${data.threadId}`,
+      read: false,
+      createdAt: now,
+    });
+  } catch {
+    // Non bloquant : le message part même si la notification échoue
+  }
+}
+
+/** Écoute les messages d'une conversation */
+export function subscribeToPrivateMessages(
+  threadId: string,
+  userId: string,
+  callback: (messages: PrivateMessage[]) => void,
+  onError?: (err: any) => void
+) {
+  const q = query(
+    collection(db, "privateMessages"),
+    where("threadId", "==", threadId),
+    where("participants", "array-contains", userId),
+    orderBy("createdAt", "asc")
+  );
+
+  return onSnapshot(
+    q,
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() } as PrivateMessage))),
+    err => {
+      console.error("Écoute des messages privés échouée :", err);
+      onError?.(err);
+    }
+  );
+}
+
+/** Conversations d'un utilisateur, la plus récente en tête */
+export function subscribeToThreads(
+  userId: string,
+  callback: (threads: PrivateThread[]) => void,
+  onError?: (err: any) => void
+) {
+  const q = query(
+    collection(db, "threads"),
+    where("participants", "array-contains", userId),
+    orderBy("lastMessageAt", "desc"),
+    limit(50)
+  );
+
+  return onSnapshot(
+    q,
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() } as PrivateThread))),
+    err => {
+      console.error("Écoute des conversations échouée :", err);
+      onError?.(err);
+    }
+  );
+}
+
+/** Remet à zéro le compteur de non-lus */
+export async function markThreadRead(
+  threadId: string,
+  userId: string
+): Promise<void> {
+  try {
+    await updateDoc(doc(db, "threads", threadId), {
+      [`unread.${userId}`]: 0,
+    });
+  } catch {
+    // Non bloquant
+  }
+}
+
+/** Total de messages privés non lus — pour la pastille de la navbar */
+export async function getPrivateUnreadTotal(userId: string): Promise<number> {
+  const snap = await getDocs(
+    query(collection(db, "threads"), where("participants", "array-contains", userId))
+  );
+  return snap.docs.reduce(
+    (sum, d) => sum + (((d.data() as any).unread || {})[userId] || 0),
+    0
+  );
+}
+
+/**
+ * Professeurs avec qui l'élève peut ouvrir une conversation.
+ *
+ * Déduits des inscriptions et demandes : on ne propose que des
+ * interlocuteurs légitimes, plutôt qu'un annuaire ouvert.
+ */
+export async function getContactableTeachers(studentId: string) {
+  const [enrollSnap, reqSnap] = await Promise.all([
+    getDocs(query(collection(db, "enrollments"), where("studentId", "==", studentId))),
+    getDocs(query(collection(db, "enrollmentRequests"), where("studentId", "==", studentId))),
+  ]);
+
+  const classeIds = [...new Set(enrollSnap.docs.map(d => (d.data() as any).classeId))];
+  const teacherIds = new Set<string>(
+    reqSnap.docs.map(d => (d.data() as any).teacherId).filter(Boolean)
+  );
+
+  for (let i = 0; i < classeIds.length; i += 10) {
+    const chunk = classeIds.slice(i, i + 10);
+    const snap = await getDocs(
+      query(collection(db, "classes"), where(documentId(), "in", chunk))
+    );
+    snap.docs.forEach(d => {
+      const tid = (d.data() as any).teacherId;
+      if (tid) teacherIds.add(tid);
+    });
+  }
+
+  if (teacherIds.size === 0) return [];
+
+  const out: any[] = [];
+  const ids = [...teacherIds];
+  for (let i = 0; i < ids.length; i += 10) {
+    const chunk = ids.slice(i, i + 10);
+    const snap = await getDocs(
+      query(collection(db, "users"), where(documentId(), "in", chunk))
+    );
+    out.push(...snap.docs.map(d => ({ uid: d.id, ...d.data() })));
+  }
+
+  return out;
+}
+
+/** Élèves avec qui le professeur peut échanger */
+export async function getContactableStudents(teacherId: string) {
+  const classesSnap = await getDocs(
+    query(collection(db, "classes"), where("teacherId", "==", teacherId))
+  );
+  if (classesSnap.empty) return [];
+
+  const classeIds = new Set(classesSnap.docs.map(d => d.id));
+
+  const enrollSnap = await getDocs(collection(db, "enrollments"));
+  const students = new Map<string, string>();
+
+  enrollSnap.docs.forEach(d => {
+    const e = d.data() as any;
+    if (classeIds.has(e.classeId) && e.studentId) {
+      students.set(e.studentId, e.studentName || "—");
+    }
+  });
+
+  return [...students.entries()].map(([uid, name]) => ({ uid, displayName: name }));
 }

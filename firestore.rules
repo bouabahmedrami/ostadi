@@ -222,6 +222,31 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Conversations privées ─────────────────────────────
+    // Seuls les deux participants y accèdent. L'identifiant est
+    // déterministe (uid1__uid2), donc devinable : la règle est la
+    // seule barrière, elle doit être stricte.
+    match /threads/{threadId} {
+      allow read: if isAdmin()
+        || (isAuth() && request.auth.uid in resource.data.participants);
+      allow create: if isAuth()
+        && request.auth.uid in request.resource.data.participants;
+      allow update: if isAuth()
+        && request.auth.uid in resource.data.participants;
+      allow delete: if isAdmin();
+    }
+
+    match /privateMessages/{messageId} {
+      allow read: if isAdmin()
+        || (isAuth() && request.auth.uid in resource.data.participants);
+      allow create: if isAuth()
+        && request.auth.uid == request.resource.data.senderId
+        && request.auth.uid in request.resource.data.participants;
+      // Un message envoyé ne se modifie ni ne s'efface : en cas de
+      // signalement, la trace doit rester intacte.
+      allow update, delete: if isAdmin();
+    }
+
     // ── Abonnements aux professeurs ───────────────────────
     match /follows/{followId} {
       // Publiques : le compteur d'abonnés s'affiche sur les profils

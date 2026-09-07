@@ -1,6 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useLang } from "@/lib/lang-context";
+import { useAuth } from "@/lib/auth-context";
+import CommissionPaymentInfo from "./CommissionPaymentInfo";
+import { haptic } from "@/lib/haptics";
 import { getTeacherBilan, OVERDUE_DAYS, WARNING_DAYS } from "@/lib/firestore";
 import { collection, query, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -18,9 +21,13 @@ import { AlertTriangle, Wallet, Clock, X, Check } from "lucide-react";
  */
 export default function CommissionAlert({ teacherId }: { teacherId: string }) {
   const { isRTL } = useLang();
+  // Le bandeau ne s'affiche qu'au professeur concerné : le profil
+  // connecté est donc bien le sien
+  const { profile } = useAuth();
   const [balance, setBalance] = useState(0);
   const [daysSince, setDaysSince] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPayment, setShowPayment] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => { load(); }, [teacherId]);
@@ -134,10 +141,27 @@ export default function CommissionAlert({ teacherId }: { teacherId: string }) {
           {overdue && (
             <p style={{ color: style.text, fontSize: 11.5, margin: "8px 0 0", lineHeight: 1.5, opacity: 0.85 }}>
               {isRTL
-                ? "يرجى التواصل مع إدارة أستاذي لتسوية وضعيتك."
-                : "Merci de contacter l'équipe Ostadi pour régulariser votre situation."}
+                ? "يرجى تسوية وضعيتك لمواصلة استقبال الطلاب."
+                : "Merci de régulariser pour continuer à recevoir des élèves."}
             </p>
           )}
+
+          {/* Le montant seul ne suffit pas : sans coordonnées, le
+              professeur devait demander où envoyer l'argent — une
+              friction de plus avant que tu sois payé. */}
+          <button
+            onClick={() => { haptic("tap"); setShowPayment(true); }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              background: style.color, color: "#0A0014",
+              border: "none", fontWeight: 750, fontSize: 12.5,
+              padding: "9px 16px", borderRadius: 10, marginTop: 12,
+              cursor: "pointer", fontFamily: "inherit",
+            }}
+          >
+            <Wallet size={14} />
+            {isRTL ? "كيف أدفع؟" : "Comment régler ?"}
+          </button>
         </div>
 
         <button
@@ -151,6 +175,14 @@ export default function CommissionAlert({ teacherId }: { teacherId: string }) {
           <X size={15} />
         </button>
       </div>
+      {/* Coordonnées de règlement — le professeur voyait le montant
+          sans savoir où l'envoyer, ce qui retardait le paiement. */}
+      <CommissionPaymentInfo
+        open={showPayment}
+        onClose={() => setShowPayment(false)}
+        amount={balance}
+        teacherName={profile?.displayName}
+      />
     </div>
   );
 }
