@@ -4802,3 +4802,46 @@ export async function getContactableStudents(teacherId: string) {
 
   return [...students.entries()].map(([uid, name]) => ({ uid, displayName: name }));
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// NOTIFICATIONS PUSH — envoi
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Envoie une notification push.
+ *
+ * Volontairement silencieuse : une push qui ne part pas ne doit
+ * jamais empêcher l'action qui l'a déclenchée. Si le service n'est
+ * pas configuré, ou que le destinataire n'a aucun appareil
+ * enregistré, on continue sans rien dire.
+ *
+ * À appeler EN PLUS de la notification en base, pas à la place :
+ * la cloche reste la source de vérité, la push n'est qu'une alerte.
+ */
+export async function sendPush(data: {
+  userId: string;
+  title: string;
+  body?: string;
+  link?: string;
+  tag?: string;
+}): Promise<void> {
+  try {
+    const { auth } = await import("./firebase");
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const token = await user.getIdToken();
+
+    await fetch("/api/push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
+  } catch (err) {
+    console.warn("Push non envoyée :", err);
+  }
+}

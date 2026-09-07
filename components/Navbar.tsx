@@ -103,7 +103,17 @@ export default function Navbar() {
     ...(user ? [{ href: "/enregistrements", label: isRTL ? "التسجيلات" : "Vidéos", icon: Video }] : []),
     // Messagerie privée — distincte du chat de cours, qui est collectif
     ...(user ? [{ href: "/messages", label: isRTL ? "الرسائل" : "Messages", icon: MessageSquare }] : []),
-    ...(user ? [{ href: "/parrainage", label: isRTL ? "الدعوة" : "Parrainage", icon: Gift }] : []),
+    /**
+     * ⚠️ Récompenses : élèves uniquement.
+     *
+     * Un professeur qui parraine toucherait un bon utilisable sur des
+     * cours — les siens compris. Il pourrait s'auto-financer en
+     * inscrivant des proches, ce qui fausse les compteurs et n'a aucun
+     * sens économique.
+     */
+    ...(user && profile?.role === "student"
+      ? [{ href: "/recompenses", label: isRTL ? "المكافآت" : "Récompenses", icon: Gift }]
+      : []),
     ...(user && profile?.role === "student" ? [{ href: "/historique-cours", label: isRTL ? "السجل" : "Historique", icon: History }] : []),
   ];
 

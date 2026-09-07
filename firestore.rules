@@ -222,6 +222,23 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Jetons d'appareils ────────────────────────────────
+    // Un jeton identifie un appareil, pas une personne. Chacun ne
+    // gère que les siens ; la lecture croisée n'a aucun usage
+    // légitime côté client.
+    match /pushTokens/{token} {
+      allow read: if isAuth() && resource.data.userId == request.auth.uid;
+      allow create: if isAuth()
+        && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuth()
+        && resource.data.userId == request.auth.uid;
+    }
+
+    // Journal d'envoi — route serveur uniquement, via Firebase Admin
+    match /pushLog/{logId} {
+      allow read, write: if false;
+    }
+
     // ── Conversations privées ─────────────────────────────
     // Seuls les deux participants y accèdent. L'identifiant est
     // déterministe (uid1__uid2), donc devinable : la règle est la

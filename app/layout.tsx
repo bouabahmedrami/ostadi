@@ -9,6 +9,7 @@ import ReminderChecker from "@/components/ReminderChecker";
 import InstallPrompt from "@/components/InstallPrompt";
 import { Atmosphere } from "@/components/Motion";
 import { ToastProvider } from "@/components/Toast";
+import PushPrompt from "@/components/PushPrompt";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://ostadi.vercel.app";
 
@@ -139,6 +140,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ReminderChecker />
                 {/* Invitation à installer — n'apparaît qu'après 45 s de navigation */}
                 <InstallPrompt />
+                {/* Invitation aux notifications — après 40 s de
+                    navigation. Le navigateur ne pose la question
+                    qu'une fois : demander trop tôt, c'est se faire
+                    refuser définitivement. */}
+                <PushPrompt />
                 <Navbar />
                 <main className="ostadi-main" style={{ position: "relative", zIndex: 1 }}>
                   {children}

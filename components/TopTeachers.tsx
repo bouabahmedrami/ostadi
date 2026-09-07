@@ -5,9 +5,8 @@ import { UserProfile } from "@/lib/types";
 import { StarDisplay } from "./StarRating";
 import { useLang } from "@/lib/lang-context";
 import { trSubject, trWilaya } from "@/lib/i18n/translate";
-import { MapPin } from "lucide-react";
+import { Users, CheckCircle, MapPin } from "lucide-react";
 import Link from "next/link";
-import Avatar from "./Avatar";
 
 export default function TopTeachers() {
   const { isRTL } = useLang();
@@ -43,8 +42,6 @@ export default function TopTeachers() {
 
   if (teachers.length === 0) return null;
 
-  const rankColors = ["#FF8C00", "#7C3AED", "#4C1D95"];
-
   return (
     <div className="tt-grid">
       {teachers.map((teacher, idx) => {
@@ -57,30 +54,25 @@ export default function TopTeachers() {
             href={`/professeur/${teacher.uid}`}
             className={`tt-card ${isFirst ? "tt-card-first" : ""}`}
           >
-            {/* ── Rang ── */}
-            {idx < 3 && (
-              <span
-                className="tt-rank"
-                style={{
-                  background: rankColors[idx],
-                  color: idx === 2 ? "#c4b5fd" : "#ffffff",
-                }}
-                aria-label={isRTL ? `المرتبة ${idx + 1}` : `Rang ${idx + 1}`}
-              >
-                {idx + 1}
-              </span>
-            )}
+            {/* Le numéro de rang a été retiré : il ressemblait à une
+                notification non lue et attirait des clics involontaires.
+                L'ordre d'affichage suffit à exprimer le classement. */}
 
             {/* ── Avatar ── */}
-            <Avatar
-              src={teacher.photoURL}
-              name={teacher.displayName}
-              size={56}
-              radius={18}
-              accent={isFirst ? "#FF8C00" : "#7C3AED"}
-              verified={verified}
-              border={2}
-            />
+            <div className="tt-avatar-wrap">
+              <div className={`tt-avatar ${isFirst ? "tt-avatar-first" : ""}`}>
+                {teacher.displayName.charAt(0).toUpperCase()}
+              </div>
+              {verified && (
+                <span
+                  className="tt-verified"
+                  title={isRTL ? "موثق" : "Vérifié"}
+                  aria-label={isRTL ? "أستاذ موثق" : "Professeur vérifié"}
+                >
+                  <CheckCircle size={13} />
+                </span>
+              )}
+            </div>
 
             {/* ── Nom ── */}
             <h3 className="tt-name">{teacher.displayName}</h3>
@@ -159,22 +151,41 @@ export default function TopTeachers() {
         }
 
         /* ── Rang ── */
-        .tt-rank {
-          position: absolute;
-          top: 11px;
-          inset-inline-end: 11px;
-          width: 23px;
-          height: 23px;
-          border-radius: 50%;
+
+        /* ── Avatar ── */
+        .tt-avatar-wrap { position: relative; }
+        .tt-avatar {
+          width: 56px;
+          height: 56px;
+          border-radius: 18px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 11px;
+          background: linear-gradient(140deg, rgba(124, 58, 237, 0.4), rgba(124, 58, 237, 0.14));
+          border: 2px solid rgba(168, 85, 247, 0.28);
+          color: #e9d5ff;
           font-weight: 900;
-          line-height: 1;
+          font-size: 22px;
         }
-
-        /* ── Avatar ── */
+        .tt-avatar-first {
+          background: linear-gradient(140deg, rgba(255, 140, 0, 0.32), rgba(255, 140, 0, 0.1));
+          border-color: rgba(255, 140, 0, 0.45);
+          color: #FF8C00;
+        }
+        .tt-verified {
+          position: absolute;
+          bottom: -3px;
+          inset-inline-end: -3px;
+          width: 21px;
+          height: 21px;
+          border-radius: 50%;
+          background: #FF8C00;
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 2px solid #14082c;
+        }
 
         /* ── Textes ── */
         .tt-name {
