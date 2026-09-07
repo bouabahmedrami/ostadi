@@ -55,7 +55,15 @@ const WILAYAS_AR: Record<string, string> = {
   "Bordj Badji Mokhtar": "برج باجي مختار", "Ouled Djellal": "أولاد جلال",
   "Béni Abbès": "بني عباس", "In Salah": "عين صالح", "In Guezzam": "عين قزام",
   "Touggourt": "تقرت", "Djanet": "جانت", "El M'Ghair": "المغير",
-  "El Meniaa": "المنيعة", "Autres": "أخرى",
+  "El Meniaa": "المنيعة",
+  /* Les 11 wilayas du découpage de 2026 — sans ces entrées, elles
+     s'afficheraient en caractères latins au milieu d'une liste arabe */
+  "Aflou": "آفلو", "El Abiodh Sidi Cheikh": "الأبيض سيدي الشيخ",
+  "El Aricha": "العريشة", "El Kantara": "القنطرة", "Barika": "بريكة",
+  "Bou Saâda": "بوسعادة", "Bir El Ater": "بئر العاتر",
+  "Ksar El Boukhari": "قصر البخاري", "Ksar Chellala": "قصر الشلالة",
+  "Aïn Oussera": "عين وسارة", "Messaad": "مسعد",
+  "Autres": "أخرى",
 };
 
 // ── FONCTIONS DE TRADUCTION ─────────────────────────────────

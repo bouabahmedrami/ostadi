@@ -146,6 +146,19 @@ export const WILAYAS = [
   "Aïn Témouchent", "Ghardaïa", "Relizane", "Timimoun", "Bordj Badji Mokhtar",
   "Ouled Djellal", "Béni Abbès", "In Salah", "In Guezzam", "Touggourt",
   "Djanet", "El M'Ghair", "El Meniaa",
+  /**
+   * Les 11 wilayas créées par le découpage de 2026.
+   *
+   * Décret présidentiel n° 26-206 du 25 mai 2026, publié au Journal
+   * officiel n° 40. L'Algérie est passée de 58 à 69 wilayas.
+   *
+   * Sans elles, un professeur d'Aïn Oussera ou de Bou Saâda ne peut
+   * tout simplement pas s'inscrire — la wilaya n'existe pas dans la
+   * liste déroulante.
+   */
+  "Aflou", "El Abiodh Sidi Cheikh", "El Aricha", "El Kantara", "Barika",
+  "Bou Saâda", "Bir El Ater", "Ksar El Boukhari", "Ksar Chellala",
+  "Aïn Oussera", "Messaad",
 ];
 
 export interface VerificationRequest {
