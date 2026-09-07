@@ -60,8 +60,28 @@ export default function TopTeachers() {
 
             {/* ── Avatar ── */}
             <div className="tt-avatar-wrap">
+              {/* ⚠️ La photo n'était jamais affichée : le composant
+                  ne rendait que l'initiale, alors que `photoURL`
+                  existait déjà sur le profil. On l'utilise, avec
+                  l'initiale en repli — un professeur sans photo doit
+                  rester présentable. */}
               <div className={`tt-avatar ${isFirst ? "tt-avatar-first" : ""}`}>
-                {teacher.displayName.charAt(0).toUpperCase()}
+                {(teacher as any).photoURL ? (
+                  <img
+                    src={(teacher as any).photoURL}
+                    alt={teacher.displayName}
+                    className="tt-avatar-img"
+                    loading="lazy"
+                    onError={e => {
+                      // Une URL morte laisserait un carré vide :
+                      // on retombe sur l'initiale
+                      (e.currentTarget as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                ) : null}
+                <span className="tt-avatar-letter">
+                  {teacher.displayName.charAt(0).toUpperCase()}
+                </span>
               </div>
               {verified && (
                 <span
@@ -155,9 +175,11 @@ export default function TopTeachers() {
         /* ── Avatar ── */
         .tt-avatar-wrap { position: relative; }
         .tt-avatar {
+          position: relative;
           width: 56px;
           height: 56px;
           border-radius: 18px;
+          overflow: hidden;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -167,6 +189,18 @@ export default function TopTeachers() {
           font-weight: 900;
           font-size: 22px;
         }
+        .tt-avatar-img {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          z-index: 1;
+        }
+        /* L'initiale reste dessous : elle réapparaît si l'image
+           échoue à charger, sans code supplémentaire */
+        .tt-avatar-letter { position: relative; z-index: 0; }
+
         .tt-avatar-first {
           background: linear-gradient(140deg, rgba(255, 140, 0, 0.32), rgba(255, 140, 0, 0.1));
           border-color: rgba(255, 140, 0, 0.45);
