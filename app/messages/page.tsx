@@ -85,11 +85,20 @@ export default function MessagesPage() {
       router.push(`/messages/${id}`);
     } catch (err: any) {
       console.error("Ouverture de conversation échouée :", err);
-      toast.error(
+      // Trois causes distinctes, trois messages : « impossible » sans
+      // explication laissait l'utilisateur sans recours
+      const msg =
         err?.message === "no-relation"
-          ? (isRTL ? "لا يمكنك مراسلة هذا الشخص." : "Vous ne pouvez pas contacter cette personne.")
-          : (isRTL ? "تعذّر فتح المحادثة." : "Impossible d'ouvrir la conversation.")
-      );
+          ? (isRTL
+              ? "يجب أن تكون مسجّلاً في أحد دروسه أوّلاً."
+              : "Inscrivez-vous d'abord à l'un de ses cours.")
+          : err?.message === "relation-check-failed"
+          ? (isRTL
+              ? "تعذّر التحقّق. حاول مرّة أخرى."
+              : "Vérification impossible. Réessayez dans un instant.")
+          : (isRTL ? "تعذّر فتح المحادثة." : "Impossible d'ouvrir la conversation.");
+
+      toast.error(msg);
     } finally {
       setOpening(null);
     }

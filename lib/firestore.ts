@@ -4519,7 +4519,16 @@ export async function openPrivateThread(data: {
   const studentId = data.meRole === "student" ? data.meId : data.otherId;
   const teacherId = data.meRole === "student" ? data.otherId : data.meId;
 
-  const allowed = await hasRelation(studentId, teacherId);
+  let allowed = false;
+  try {
+    allowed = await hasRelation(studentId, teacherId);
+  } catch (err) {
+    // Distinguer un refus légitime d'une panne : sans ça, un index
+    // manquant ressemblait à un blocage de sécurité
+    console.error("Vérification du lien échouée :", err);
+    throw new Error("relation-check-failed");
+  }
+
   if (!allowed) throw new Error("no-relation");
 
   const now = new Date().toISOString();
@@ -4564,16 +4573,23 @@ export async function hasRelation(
     return true;
   }
 
-  // Demande d'inscription
+  /**
+   * Demande d'inscription.
+   *
+   * ⚠️ On filtre sur `studentId` seul, puis on compare `teacherId` en
+   * mémoire. Une requête à deux champs demanderait un index composite
+   * `studentId + teacherId` qui n'existe pas — et Firestore échoue
+   * alors avec `failed-precondition`, ce qui faisait remonter
+   * « Impossible d'ouvrir la conversation » sans autre explication.
+   *
+   * Un élève a quelques dizaines de demandes au maximum : filtrer en
+   * mémoire ne coûte rien, et évite un index de plus à maintenir.
+   */
   const reqSnap = await getDocs(
-    query(
-      collection(db, "enrollmentRequests"),
-      where("studentId", "==", studentId),
-      where("teacherId", "==", teacherId),
-      limit(1)
-    )
+    query(collection(db, "enrollmentRequests"), where("studentId", "==", studentId))
   );
-  return !reqSnap.empty;
+
+  return reqSnap.docs.some(d => (d.data() as any).teacherId === teacherId);
 }
 
 /** Envoie un message privé */
