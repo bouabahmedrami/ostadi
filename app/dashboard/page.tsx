@@ -29,6 +29,7 @@ import { notifyFollowersOfNewClasse } from "@/lib/firestore";
 import ResponseBadge from "@/components/ResponseBadge";
 import ProgressTracker from "@/components/ProgressTracker";
 import AttendanceReport from "@/components/AttendanceReport";
+import CouponRedeem from "@/components/CouponRedeem";
 
 function StatCard({ label, value, icon, color }: { label: string; value: string | number; icon: React.ReactNode; color: string }) {
   // Un chiffre qui monte attire l'œil là où un chiffre posé ne dit
@@ -672,6 +673,21 @@ export default function DashboardPage() {
                 classeTitle={selectedClasse.title}
               />
             </div>
+
+            {/* ═══ BON DE L'ÉLÈVE ═══
+                Le professeur saisit le code, voit le montant, et
+                valide. Sans cette vérification, l'élève annonçait un
+                bon et il fallait le croire sur parole. */}
+            {user && selectedClasse && (
+              <div style={{ marginBottom: '16px' }}>
+                <CouponRedeem
+                  classeId={selectedClasse.id}
+                  classeTitle={selectedClasse.title}
+                  classePrice={selectedClasse.price}
+                  teacherId={user.uid}
+                />
+              </div>
+            )}
 
             {/* ═══ PRÉSENCE RÉELLE ═══
                 Qui est venu, combien de temps. Ce que « présent »

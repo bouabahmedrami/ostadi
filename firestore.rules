@@ -298,8 +298,32 @@ service cloud.firestore {
         || (isAuth() && resource.data.userId == request.auth.uid);
       // Émis côté client à l'atteinte d'un seuil, jamais librement
       allow create: if isAuth();
-      // Seul l'admin peut marquer un bon consommé : sinon un élève
-      // pourrait le réutiliser indéfiniment en remettant `used` à faux
+      /**
+       * Consommation d'un bon : réservée aux professeurs.
+       *
+       * L'élève ne peut pas modifier ses propres bons — sinon il
+       * remettrait `used` à faux pour les réutiliser indéfiniment.
+       * Seul un professeur peut marquer un bon comme consommé, et
+       * uniquement dans ce sens.
+       */
+      allow update: if isAdmin()
+        || (isTeacher()
+            && request.resource.data.used == true
+            && resource.data.used == false
+            && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['used', 'usedAt', 'usedOnClasseId']));
+      allow delete: if isAdmin();
+    }
+
+    // ── Bons consommés ────────────────────────────────────
+    // Trace comptable : le professeur doit voir pourquoi sa
+    // commission a baissé, sinon il croira à une erreur.
+    match /couponRedemptions/{redemptionId} {
+      allow read: if isAdmin()
+        || (isAuth() && (resource.data.teacherId == request.auth.uid
+                      || resource.data.studentId == request.auth.uid));
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == request.auth.uid;
       allow update, delete: if isAdmin();
     }
 

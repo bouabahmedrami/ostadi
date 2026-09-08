@@ -1488,7 +1488,29 @@ export async function getTeacherBilan(
     ? getCommissionRate(teacherSnap.data() as any)
     : PLATFORM_COMMISSION_RATE;
 
-  const commission = Math.round(grossRevenue * rate);
+  const rawCommission = Math.round(grossRevenue * rate);
+
+  /**
+   * ⚠️ Les bons sont déduits de la commission, pas des revenus.
+   *
+   * Un professeur qui perdrait 1 000 DA sur une opération de
+   * parrainage qu'il n'a pas décidée refuserait les bons — et il
+   * aurait raison. Il encaisse son prix plein ; c'est la plateforme
+   * qui absorbe la réduction, en renonçant à une part de commission.
+   *
+   * Le résultat ne descend jamais sous zéro : si les bons dépassent
+   * la commission du mois, le reste s'imputera naturellement sur les
+   * périodes suivantes, puisque le calcul est refait à chaque bilan.
+   */
+  let couponDiscount = 0;
+  try {
+    const since = period === "all" ? undefined : lines[0]?.date;
+    couponDiscount = await getRedemptionTotal(teacherId, since);
+  } catch (err) {
+    console.warn("Bons non pris en compte :", err);
+  }
+
+  const commission = Math.max(rawCommission - couponDiscount, 0);
 
   const payments = paymentsSnap.docs
     .map(d => d.data() as any)
@@ -1505,6 +1527,10 @@ export async function getTeacherBilan(
     commission,
     commissionRate: rate,
     isSubscriber: rate === SUBSCRIBER_COMMISSION_RATE,
+    /** Commission avant déduction des bons */
+    rawCommission,
+    /** Réductions offertes par la plateforme sur cette période */
+    couponDiscount,
     netRevenue: grossRevenue - commission,
     paid,
     balance: commission - paid,
@@ -4844,4 +4870,182 @@ export async function sendPush(data: {
   } catch (err) {
     console.warn("Push non envoyée :", err);
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// UTILISATION DES BONS
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Code affiché à l'élève, montré au professeur.
+ *
+ * Dérivé de l'identifiant du bon, donc stable et vérifiable sans
+ * stockage supplémentaire. Huit caractères, sans les lettres et
+ * chiffres qui se confondent à l'oral — un code se transmet souvent
+ * de vive voix.
+ */
+export function couponCode(couponId: string): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let hash = 0;
+  for (let i = 0; i < couponId.length; i++) {
+    hash = (hash * 33 + couponId.charCodeAt(i)) >>> 0;
+  }
+  let code = "";
+  for (let i = 0; i < 8; i++) {
+    code += alphabet[hash % alphabet.length];
+    hash = Math.floor(hash / alphabet.length) + couponId.charCodeAt(i % couponId.length) * 7;
+  }
+  return code.slice(0, 4) + "-" + code.slice(4);
+}
+
+export interface CouponCheck {
+  valid: boolean;
+  reason?: "not-found" | "used" | "expired" | "wrong-student";
+  coupon?: Coupon;
+  /** Réduction applicable sur ce cours précis */
+  discount?: number;
+  /** Le cours devient-il entièrement gratuit ? */
+  free?: boolean;
+}
+
+/**
+ * Vérifie un bon présenté par un élève.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Sans cette vérification, l'élève disait « j'ai un bon de 1 000 DA »
+ * et le professeur devait le croire sur parole — sans moyen de savoir
+ * si le bon existait, s'il avait déjà servi, ou s'il appartenait à
+ * quelqu'un d'autre. Rien n'empêchait de le réutiliser dix fois.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function checkCoupon(
+  code: string,
+  studentId: string,
+  classePrice: number
+): Promise<CouponCheck> {
+  const clean = code.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (clean.length !== 8) return { valid: false, reason: "not-found" };
+
+  /**
+   * Le code n'étant pas stocké, on le recalcule pour les bons de
+   * l'élève. On restreint à ses propres bons : c'est à la fois plus
+   * rapide et plus sûr — un code deviné ne donnerait accès à rien.
+   */
+  const snap = await getDocs(
+    query(collection(db, "coupons"), where("userId", "==", studentId))
+  );
+
+  const match = snap.docs.find(
+    d => couponCode(d.id).replace("-", "") === clean
+  );
+
+  if (!match) return { valid: false, reason: "not-found" };
+
+  const c = { id: match.id, ...match.data() } as Coupon;
+
+  if (c.used) return { valid: false, reason: "used", coupon: c };
+  if (c.expiresAt <= new Date().toISOString()) {
+    return { valid: false, reason: "expired", coupon: c };
+  }
+
+  // Un bon de 1 000 DA sur un cours à 800 ne rend pas 200 DA :
+  // la réduction est plafonnée au prix du cours
+  const discount = c.freeCourse ? classePrice : Math.min(c.amount, classePrice);
+
+  return { valid: true, coupon: c, discount, free: c.freeCourse };
+}
+
+/**
+ * Consomme un bon lors d'une inscription.
+ *
+ * ⚠️ La réduction est portée par la PLATEFORME, pas par le professeur.
+ *
+ * C'est le point qui rend le système viable. Un professeur qui perd
+ * 1 000 DA sur une opération de parrainage qu'il n'a pas décidée
+ * refusera les bons — et il aurait raison. Il encaisse donc son prix
+ * plein, et la réduction est déduite de la commission due.
+ *
+ * Si la réduction dépasse la commission du cours, la différence est
+ * enregistrée comme une avance : elle s'imputera sur les commissions
+ * suivantes plutôt que d'être perdue.
+ */
+export async function redeemCoupon(data: {
+  couponId: string;
+  studentId: string;
+  classeId: string;
+  classeTitle: string;
+  teacherId: string;
+  classePrice: number;
+  discount: number;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  await updateDoc(doc(db, "coupons", data.couponId), {
+    used: true,
+    usedAt: now,
+    usedOnClasseId: data.classeId,
+  });
+
+  /**
+   * Trace comptable.
+   *
+   * Le professeur doit voir pourquoi sa commission a baissé, sinon
+   * il croira à une erreur. Cette ligne apparaît dans son bilan.
+   */
+  await addDoc(collection(db, "couponRedemptions"), {
+    couponId: data.couponId,
+    studentId: data.studentId,
+    teacherId: data.teacherId,
+    classeId: data.classeId,
+    classeTitle: data.classeTitle,
+    classePrice: data.classePrice,
+    discount: data.discount,
+    /** Part absorbée par la plateforme */
+    platformCost: data.discount,
+    redeemedAt: now,
+  });
+
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId: data.studentId,
+      type: "subscription",
+      title: "🎁 Bon utilisé",
+      titleAr: "🎁 تمّ استعمال القسيمة",
+      body: `${data.discount.toLocaleString("fr-DZ")} DA déduits sur « ${data.classeTitle} ».`,
+      bodyAr: `تمّ خصم ${data.discount.toLocaleString("fr-DZ")} دج من « ${data.classeTitle} ».`,
+      link: "/recompenses",
+      read: false,
+      createdAt: now,
+    });
+  } catch { /* non bloquant */ }
+}
+
+/**
+ * Bons consommés sur les cours d'un professeur.
+ *
+ * Sert à créditer sa commission : ces montants ont été offerts par
+ * la plateforme, pas par lui.
+ */
+export async function getTeacherRedemptions(
+  teacherId: string,
+  since?: string
+): Promise<any[]> {
+  const snap = await getDocs(
+    query(collection(db, "couponRedemptions"), where("teacherId", "==", teacherId))
+  );
+
+  let list = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+  if (since) list = list.filter(r => r.redeemedAt >= since);
+
+  return list.sort((a, b) => b.redeemedAt.localeCompare(a.redeemedAt));
+}
+
+/** Total des réductions accordées sur une période */
+export async function getRedemptionTotal(
+  teacherId: string,
+  since?: string
+): Promise<number> {
+  const list = await getTeacherRedemptions(teacherId, since);
+  return list.reduce((s, r) => s + (r.discount || 0), 0);
 }

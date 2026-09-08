@@ -6,6 +6,7 @@ import { useLang } from "@/lib/lang-context";
 import {
   getReferralStats, getLoyaltyProgress, getUserCoupons,
   REFERRALS_FOR_REWARD, REFERRAL_COUPON_AMOUNT, COURSES_FOR_FREE,
+  couponCode,
 } from "@/lib/firestore";
 import { useToast } from "@/components/Toast";
 import { haptic } from "@/lib/haptics";
@@ -212,6 +213,39 @@ export default function RecompensesPage() {
                       <div style={{ color: "#8b7bb8", fontSize: 11.5, marginTop: 2, lineHeight: 1.5 }}>
                         {isRTL ? c.labelAr : c.label}
                       </div>
+
+                      {/* Le code à présenter au professeur.
+                          Sans lui, l'élève annonçait un bon sans que
+                          le professeur puisse le vérifier — ni savoir
+                          s'il avait déjà servi. */}
+                      <div style={{
+                        display: "inline-flex", alignItems: "center", gap: 8,
+                        marginTop: 9,
+                        background: "rgba(34,197,94,0.1)",
+                        border: "1px dashed rgba(34,197,94,0.34)",
+                        borderRadius: 9, padding: "6px 12px",
+                      }}>
+                        <span style={{
+                          color: "#4ade80", fontWeight: 800, fontSize: 14,
+                          fontFamily: "monospace", letterSpacing: "1.5px",
+                        }}>
+                          {couponCode(c.id)}
+                        </span>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(couponCode(c.id));
+                            haptic("success");
+                            toast.success(isRTL ? "تم نسخ الكود" : "Code copié");
+                          }}
+                          style={{
+                            background: "none", border: "none", color: "#4ade80",
+                            cursor: "pointer", padding: 0, display: "flex",
+                          }}
+                          aria-label={isRTL ? "نسخ" : "Copier"}
+                        >
+                          <Copy size={12} />
+                        </button>
+                      </div>
                     </div>
 
                     <span style={{
@@ -229,8 +263,8 @@ export default function RecompensesPage() {
 
               <p style={{ color: "#4c1d95", fontSize: 10.5, margin: "12px 0 0", lineHeight: 1.6 }}>
                 {isRTL
-                  ? "اذكر القسيمة للأستاذ عند التسجيل في درس."
-                  : "Mentionnez votre bon au professeur au moment de vous inscrire à un cours."}
+                  ? "أعطِ الكود للأستاذ عند التسجيل — يتحقّق منه ويطبّق الخصم مباشرة."
+                  : "Donnez le code au professeur lors de l'inscription — il le vérifie et applique la réduction."}
               </p>
             </div>
           </Reveal>

@@ -739,6 +739,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "couponRedemptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "teacherId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "redeemedAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []
