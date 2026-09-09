@@ -12,6 +12,7 @@ import {
 } from "@/lib/firestore";
 import TeacherPaymentsPanel from "@/components/TeacherPaymentsPanel";
 import ReportsPanel from "@/components/ReportsPanel";
+import AccountManager from "@/components/AccountManager";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { useConfirm } from "@/lib/useOptimistic";
@@ -19,7 +20,7 @@ import { haptic } from "@/lib/haptics";
 import {
   Users, BookOpen, Banknote, TrendingUp, ShieldCheck, Crown, Star,
   AlertTriangle, Eye, Check, X, MapPin, BarChart3, Wallet, UserCheck,
-  Video, Lock, Activity, Flag, Database, Loader2,
+  Video, Lock, Activity, Flag, Database, Loader2, UserCog,
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════
@@ -115,7 +116,10 @@ export default function AdminPage() {
   const [verifications, setVerifications] = useState<any[]>([]);
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [loadingData, setLoadingData] = useState(true);
-  const [tab, setTab] = useState<"overview" | "revenue" | "payments" | "users" | "moderation" | "reports">("overview");
+  const [tab, setTab] = useState<
+    | "overview" | "revenue" | "payments" | "users"
+    | "moderation" | "reports" | "comptes"
+  >("overview");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -361,6 +365,7 @@ export default function AdminPage() {
     { id: "users", label: `${isRTL ? "المستخدمون" : "Utilisateurs"} (${users.length})`, icon: <Users size={14} /> },
     { id: "moderation", label: `${isRTL ? "الإشراف" : "Modération"}${alertCount > 0 ? ` (${alertCount})` : ""}`, icon: <ShieldCheck size={14} /> },
     { id: "reports", label: isRTL ? "الإبلاغات" : "Signalements", icon: <Flag size={14} /> },
+    { id: "comptes", label: isRTL ? "الحسابات" : "Comptes", icon: <UserCog size={14} /> },
   ];
 
   return (
@@ -655,6 +660,10 @@ export default function AdminPage() {
         )}
 
         {/* ═══════════ UTILISATEURS ═══════════ */}
+        {/* Gestion des comptes — suspension et suppression.
+            Séparé de l'onglet Utilisateurs, qui reste en lecture. */}
+        {tab === "comptes" && <AccountManager />}
+
         {tab === "users" && (
           <div style={S.card}>
             <h3 style={S.cardTitle}>

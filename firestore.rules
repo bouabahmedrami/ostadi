@@ -222,6 +222,14 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // ── Journal des actions administrateur ────────────────
+    // Écrit par la route serveur via Firebase Admin. Une suppression
+    // de compte doit laisser une trace : qui, quand, quoi.
+    match /adminLog/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // ── Jetons d'appareils ────────────────────────────────
     // Un jeton identifie un appareil, pas une personne. Chacun ne
     // gère que les siens ; la lecture croisée n'a aucun usage
