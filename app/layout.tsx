@@ -56,9 +56,29 @@ export const metadata: Metadata = {
     images: ["/og-image.png"],
   },
 
+  /**
+   * Icônes du site.
+   *
+   * ⚠️ Un seul `/favicon.ico` ne suffit pas : Google, les navigateurs
+   * de bureau et les mobiles cherchent des formats différents. Si le
+   * fichier attendu manque, chacun affiche son propre repli — d'où le
+   * logo générique qui apparaissait dans les résultats.
+   *
+   * `sizes` est important : sans lui, un navigateur peut choisir la
+   * version 512 px pour un onglet de 16 px, ce qui donne une image
+   * floue et sombre.
+   */
   icons: {
-    icon: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon-32.png", type: "image/png", sizes: "32x32" },
+      { url: "/icon-16.png", type: "image/png", sizes: "16x16" },
+      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+    ],
+    apple: [
+      { url: "/icon-180.png", sizes: "180x180" },
+    ],
+    shortcut: "/favicon.ico",
   },
 
   robots: {
