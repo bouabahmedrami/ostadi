@@ -26,40 +26,64 @@ service firebase.storage {
     }
 
     function isValidVideo() {
-      return request.resource.size < 100 * 1024 * 1024
+      // 105 Mo, pas 100 : le formulaire accepte exactement 100 Mo, et
+      // une comparaison stricte rejetterait un fichier de 100 Mo pile
+      // — sans que l'utilisateur comprenne pourquoi
+      return request.resource.size < 105 * 1024 * 1024
         && request.resource.contentType.matches('video/.*');
     }
 
     // ── Photos de profil ──────────────────────────────────
     // Tout le monde peut voir les photos de profil
     // Seul l'utilisateur connecté peut téléverser la sienne
-    match /profile-photos/{fileName} {
+    // Le chemin peut contenir l'uid en sous-dossier : on couvre
+    // les deux formes plutôt que de dépendre d'une convention
+    match /profile-photos/{allPaths=**} {
       allow read: if true;
       allow write: if isAuth() && isValidImage();
       allow delete: if isAuth();
     }
 
-    // ── Documents de vérification (diplôme, CIN) ───────────
-    // Lecture : admin uniquement (données sensibles)
-    // Écriture : tout prof connecté
-    match /verifications/{fileName} {
+    // ── Documents de vérification (diplôme, carte d'identité) ──
+    /**
+     * ⚠️ `{allPaths=**}` et non `{fileName}`.
+     *
+     * C'était la cause du refus : le code écrit dans
+     * `verifications/{uid}/{fichier}` — deux niveaux — alors que
+     * `{fileName}` ne correspond qu'à UN seul segment. Aucune règle
+     * ne s'appliquait, donc la règle de blocage final prenait le
+     * relais et l'envoi échouait avec « غير مصرح ».
+     *
+     * Le professeur ne pouvait tout simplement pas faire vérifier
+     * son compte.
+     */
+    match /verifications/{userId}/{allPaths=**} {
+      // Le professeur relit ses propres pièces, l'admin les instruit
+      allow read: if isAdmin() || (isAuth() && request.auth.uid == userId);
+
+      // Documents ET vidéo de présentation passent par ici
+      allow write: if isAuth()
+        && request.auth.uid == userId
+        && (isValidDocument() || isValidVideo());
+
+      allow delete: if isAdmin() || (isAuth() && request.auth.uid == userId);
+    }
+
+    // ── Supports de cours ─────────────────────────────────
+    // Déposés par le professeur, lus par les élèves inscrits.
+    // Le contrôle d'accès fin se fait côté Firestore : ici on
+    // vérifie seulement le format et la taille.
+    match /materials/{allPaths=**} {
       allow read: if isAuth();
-      allow write: if isAuth() && isValidDocument();
-      allow delete: if isAdmin();
+      allow write: if isAuth()
+        && request.resource.size < 25 * 1024 * 1024;
+      allow delete: if isAuth();
     }
 
     // ── Enregistrements de cours ──────────────────────────
     match /recordings/{allPaths=**} {
       allow read: if isAuth();
       allow write: if isAuth() && isValidVideo();
-      allow delete: if isAuth();
-    }
-
-    // ── Supports de cours ─────────────────────────────────
-    // PDF, images, exercices déposés par le professeur.
-    match /materials/{allPaths=**} {
-      allow read: if isAuth();
-      allow write: if isAuth() && request.resource.size < 25 * 1024 * 1024;
       allow delete: if isAuth();
     }
 
