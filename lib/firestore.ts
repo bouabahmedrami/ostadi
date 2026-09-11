@@ -5049,3 +5049,141 @@ export async function getRedemptionTotal(
   const list = await getTeacherRedemptions(teacherId, since);
   return list.reduce((s, r) => s + (r.discount || 0), 0);
 }
+
+
+// ═══════════════════════════════════════════════════════════
+// CHANGEMENT DE RÔLE
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Bascule un compte entre élève et professeur.
+ *
+ * ═══════════════════════════════════════════════════════════
+ * Pourquoi cette fonction plutôt que « supprimer et recréer ».
+ *
+ * Firebase sépare l'authentification et les données : supprimer le
+ * document Firestore ne supprime pas le compte Auth. La personne
+ * garde donc son email et son mot de passe, se reconnecte, et
+ * l'application lui recrée un profil — avec le rôle par défaut,
+ * c'est-à-dire élève. D'où la boucle : elle ne pouvait jamais
+ * devenir professeur.
+ *
+ * Changer le rôle contourne tout cela. C'est aussi moins destructeur :
+ * la personne garde son historique, ses messages, ses inscriptions.
+ * ═══════════════════════════════════════════════════════════
+ */
+export async function changeUserRole(
+  userId: string,
+  newRole: "student" | "teacher"
+): Promise<{ ok: boolean; warning?: string }> {
+  const ref = doc(db, "users", userId);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) return { ok: false, warning: "profile-not-found" };
+
+  const profile = snap.data() as any;
+  if (profile.role === newRole) return { ok: true };
+
+  const now = new Date().toISOString();
+
+  /**
+   * ⚠️ Passage de professeur à élève : ses cours deviennent orphelins.
+   *
+   * On ne bloque pas — l'administrateur sait ce qu'il fait — mais on
+   * l'avertit. Des élèves inscrits à un cours dont le professeur n'est
+   * plus professeur se retrouveraient sans interlocuteur.
+   */
+  let warning: string | undefined;
+
+  if (newRole === "student") {
+    const classesSnap = await getDocs(
+      query(collection(db, "classes"), where("teacherId", "==", userId))
+    );
+    const active = classesSnap.docs.filter(d => {
+      const c = d.data() as any;
+      return (c.enrolledCount || 0) > 0 && c.status !== "ended";
+    });
+    if (active.length > 0) warning = `${active.length} cours actifs`;
+  }
+
+  const update: any = { role: newRole, roleChangedAt: now };
+
+  if (newRole === "teacher") {
+    // Champs professeur — initialisés vides, à compléter par l'intéressé
+    if (profile.rating === undefined) update.rating = 0;
+    if (profile.ratingCount === undefined) update.ratingCount = 0;
+    if (profile.followerCount === undefined) update.followerCount = 0;
+    if (profile.subjects === undefined) update.subjects = [];
+    if (profile.bio === undefined) update.bio = "";
+
+    // Un professeur nouvellement promu n'est pas vérifié d'office :
+    // il doit passer par la procédure comme tout le monde
+    if (profile.verified === undefined) update.verified = false;
+  }
+
+  await updateDoc(ref, update);
+
+  try {
+    await addDoc(collection(db, "notifications"), {
+      userId,
+      type: "verification",
+      title: newRole === "teacher"
+        ? "👨‍🏫 Votre compte est passé en Professeur"
+        : "👨‍🎓 Votre compte est passé en Élève",
+      titleAr: newRole === "teacher"
+        ? "👨‍🏫 تمّ تحويل حسابك إلى أستاذ"
+        : "👨‍🎓 تمّ تحويل حسابك إلى طالب",
+      body: newRole === "teacher"
+        ? "Complétez votre profil et lancez la vérification pour publier vos cours."
+        : "Votre compte a été modifié par l'administration.",
+      bodyAr: newRole === "teacher"
+        ? "أكمل ملفك وابدأ التوثيق لنشر دروسك."
+        : "تمّ تعديل حسابك من طرف الإدارة.",
+      link: newRole === "teacher" ? "/dashboard" : "/",
+      read: false,
+      createdAt: now,
+    });
+  } catch {
+    // Non bloquant
+  }
+
+  return { ok: true, warning };
+}
+
+/**
+ * Répare un profil manquant.
+ *
+ * Cas de figure : le document Firestore a été supprimé mais le compte
+ * Auth existe toujours. La personne se connecte et l'application ne
+ * trouve rien. Plutôt que de la laisser dans un état cassé, on
+ * recrée un profil minimal avec le bon rôle.
+ */
+export async function repairProfile(data: {
+  userId: string;
+  email: string;
+  displayName: string;
+  role: "student" | "teacher";
+  phone?: string;
+  wilaya?: string;
+}): Promise<void> {
+  const now = new Date().toISOString();
+
+  await setDoc(doc(db, "users", data.userId), {
+    uid: data.userId,
+    email: data.email,
+    displayName: data.displayName,
+    role: data.role,
+    phone: data.phone || "",
+    wilaya: data.wilaya || "",
+    createdAt: now,
+    repairedAt: now,
+    ...(data.role === "teacher" ? {
+      rating: 0,
+      ratingCount: 0,
+      followerCount: 0,
+      subjects: [],
+      bio: "",
+      verified: false,
+    } : {}),
+  }, { merge: true });
+}

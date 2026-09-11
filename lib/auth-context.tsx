@@ -74,12 +74,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const now = new Date().toISOString();
       const isAdmin = uid === ADMIN_UID;
 
+      /**
+       * ⚠️ Rôle d'un profil recréé.
+       *
+       * Firebase sépare l'authentification des données : supprimer le
+       * document Firestore laisse le compte Auth intact. La personne
+       * se reconnecte, on arrive ici, et on lui refabrique un profil.
+       *
+       * Le rôle « élève » par défaut créait une boucle : un professeur
+       * dont le profil avait été supprimé redevenait élève à chaque
+       * reconnexion, sans moyen d'en sortir. Le commentaire d'origine
+       * promettait un changement « depuis le profil » — cette option
+       * n'existait pas.
+       *
+       * On mémorise donc le rôle voulu au moment de l'inscription,
+       * dans le stockage local. Il survit à une suppression de profil
+       * et disparaît de lui-même une fois utilisé.
+       */
+      let intendedRole: "student" | "teacher" = "student";
+      try {
+        const saved = localStorage.getItem("ostadi-intended-role");
+        if (saved === "teacher" || saved === "student") {
+          intendedRole = saved;
+          localStorage.removeItem("ostadi-intended-role");
+        }
+      } catch { /* navigation privée */ }
+
       const created: UserProfile = {
         uid,
-        // L'admin est aussi professeur, pour pouvoir tester la plateforme.
-        // Les autres comptes orphelins démarrent en élève : c'est le rôle
-        // le moins permissif, et il se change depuis le profil.
-        role: isAdmin ? "teacher" : "student",
+        // L'admin est aussi professeur, pour pouvoir tester la plateforme
+        role: isAdmin ? "teacher" : intendedRole,
         displayName:
           u.displayName || u.email?.split("@")[0] || "Utilisateur",
         phone: u.phoneNumber || "",
@@ -130,6 +154,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   ) => {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(cred.user, { displayName: name });
+
+    /**
+     * Mémorise le rôle voulu.
+     *
+     * Sert de filet si le profil Firestore venait à disparaître : la
+     * recréation automatique retrouvera le bon rôle au lieu de
+     * retomber sur « élève ».
+     */
+    try {
+      localStorage.setItem("ostadi-intended-role", role);
+    } catch { /* navigation privée */ }
 
     const now = new Date().toISOString();
     const profileData: UserProfile = {

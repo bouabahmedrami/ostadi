@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useLang } from "@/lib/lang-context";
 import {
-  getAllUsersForAdmin, suspendAccount, unsuspendAccount,
+  getAllUsersForAdmin, suspendAccount, unsuspendAccount, changeUserRole,
 } from "@/lib/firestore";
 import { useToast } from "./Toast";
 import { useConfirm } from "@/lib/useOptimistic";
@@ -12,7 +12,7 @@ import { haptic } from "@/lib/haptics";
 import Sheet from "./Sheet";
 import {
   Search, Ban, CheckCircle2, Trash2, Loader2, AlertTriangle,
-  GraduationCap, User, ShieldAlert,
+  GraduationCap, User, ShieldAlert, RefreshCw,
 } from "lucide-react";
 
 /**
@@ -93,6 +93,63 @@ export default function AccountManager() {
     } catch (err) {
       console.error("Changement de statut échoué :", err);
       toast.error(isRTL ? "فشلت العملية" : "Action impossible");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /**
+   * Bascule élève ↔ professeur.
+   *
+   * ⚠️ Remplace le cycle « supprimer puis recréer », qui ne
+   * fonctionnait pas : Firebase sépare l'authentification des
+   * données. Supprimer le profil Firestore laisse le compte Auth
+   * intact — la personne se reconnecte, l'application lui recrée un
+   * profil avec le rôle par défaut, et elle reste élève.
+   */
+  async function switchRole(u: any) {
+    const target = u.role === "teacher" ? "student" : "teacher";
+
+    const ok = await confirm(
+      target === "teacher"
+        ? (isRTL ? `تحويل ${u.displayName} إلى أستاذ؟` : `Passer ${u.displayName} en Professeur ?`)
+        : (isRTL ? `تحويل ${u.displayName} إلى طالب؟` : `Passer ${u.displayName} en Élève ?`),
+      {
+        message: target === "teacher"
+          ? (isRTL
+              ? "سيتمكّن من نشر الدروس. التوثيق يبقى مطلوباً."
+              : "Il pourra publier des cours. La vérification reste à faire.")
+          : (isRTL
+              ? "لن يعود بإمكانه نشر الدروس."
+              : "Il ne pourra plus publier de cours."),
+        danger: target === "student",
+      }
+    );
+    if (!ok) return;
+
+    setBusy(u.uid);
+    haptic("tap");
+    try {
+      const r = await changeUserRole(u.uid, target);
+
+      if (r.warning) {
+        // Des cours actifs perdent leur professeur : on le signale
+        // plutôt que de laisser découvrir le problème plus tard
+        toast.toast(
+          isRTL
+            ? `تمّ التحويل — انتبه: ${r.warning}`
+            : `Rôle changé — attention : ${r.warning}`,
+          "info"
+        );
+      } else {
+        haptic("success");
+        toast.success(isRTL ? "تمّ تغيير الدور" : "Rôle modifié");
+      }
+
+      await load();
+    } catch (err) {
+      console.error("Changement de rôle échoué :", err);
+      toast.error(isRTL ? "فشل التغيير" : "Changement impossible");
     } finally {
       setBusy(null);
     }
@@ -281,6 +338,28 @@ export default function AccountManager() {
                 {u.suspended
                   ? (isRTL ? "رفع" : "Rétablir")
                   : (isRTL ? "تعليق" : "Suspendre")}
+              </button>
+
+              {/* Changer de rôle — la solution au cas « il reste élève » */}
+              <button
+                onClick={() => switchRole(u)}
+                disabled={busy === u.uid}
+                title={u.role === "teacher"
+                  ? (isRTL ? "تحويل إلى طالب" : "Passer en Élève")
+                  : (isRTL ? "تحويل إلى أستاذ" : "Passer en Professeur")}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0,
+                  background: "rgba(124,58,237,0.15)",
+                  color: "#a78bfa",
+                  border: "1px solid rgba(124,58,237,0.3)",
+                  fontSize: 11.5, fontWeight: 700, padding: "7px 11px",
+                  borderRadius: 9, cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                <RefreshCw size={12} />
+                {u.role === "teacher"
+                  ? (isRTL ? "طالب" : "Élève")
+                  : (isRTL ? "أستاذ" : "Prof")}
               </button>
 
               {/* Supprimer — volontairement discret */}
