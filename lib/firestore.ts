@@ -822,9 +822,10 @@ export async function autoArchiveFinishedClasses(): Promise<number> {
   const batch = writeBatch(db);
   let archived = 0;
 
+  let revived = 0;
+
   snap.docs.forEach(d => {
     const c = d.data() as Classe;
-    if (c.status === "ended") return; // déjà terminé
 
     /**
      * ⚠️ Pour un cours MENSUEL, la fin est celle de la DERNIÈRE séance.
@@ -854,16 +855,52 @@ export async function autoArchiveFinishedClasses(): Promise<number> {
     const endMs = startMs + (c.durationMinutes || 60) * 60_000;
     const closeMs = endMs + CLOSE_AFTER_MIN * 60_000;
 
-    if (now.getTime() > closeMs) {
+    const isOver = now.getTime() > closeMs;
+
+    /**
+     * ⚠️ La fonction corrige dans LES DEUX SENS.
+     *
+     * L'ancienne version sortait immédiatement sur les cours déjà
+     * marqués « terminé ». Un cours archivé par erreur — ce qui
+     * arrivait avec l'ancien décalage de fuseau — ne serait donc
+     * jamais réexaminé. Il restait affiché « منتهي » alors que sa
+     * date n'était même pas arrivée, et aucun élève ne pouvait s'y
+     * inscrire.
+     *
+     * On rétablit désormais un cours dont la date est encore à venir.
+     * La date fait foi, pas le statut.
+     */
+    if (isOver && c.status !== "ended") {
       batch.update(d.ref, {
         status: "ended",
         archivedAt: now.toISOString(),
       });
       archived++;
+      return;
+    }
+
+    if (!isOver && c.status === "ended") {
+      // Le professeur a pu terminer volontairement une séance en
+      // cours : on ne rétablit que ce qui n'a pas encore commencé
+      const notStarted = now.getTime() < startMs;
+      if (notStarted) {
+        batch.update(d.ref, {
+          status: "upcoming",
+          archivedAt: null,
+          revivedAt: now.toISOString(),
+        });
+        revived++;
+      }
     }
   });
 
-  if (archived > 0) await batch.commit();
+  if (archived > 0 || revived > 0) {
+    await batch.commit();
+    if (revived > 0) {
+      console.info(`${revived} cours rétabli(s) — date encore à venir`);
+    }
+  }
+
   return archived;
 }
 
